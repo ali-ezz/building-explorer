@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Global Building Explorer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0e13'/%3E%3Cg fill='none' stroke='%235aa9e6' stroke-width='2'%3E%3Crect x='6' y='13' width='9' height='13'/%3E%3Crect x='17' y='7' width='9' height='19'/%3E%3C/g%3E%3C/svg%3E">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
@@ -115,6 +116,8 @@ h1{margin:0;font-size:14.5px;font-weight:600;letter-spacing:-.01em}
   font-variant-numeric:tabular-nums}
 input[type=range]{flex:1;accent-color:var(--accent);height:3px}
 
+.capnote{font-size:10.5px;color:var(--estimated);min-height:0;line-height:1.4}
+.capnote:empty{display:none}
 .row{display:flex;gap:8px}
 button{flex:1;padding:8px 10px;background:var(--raise);color:var(--ink);
   border:1px solid var(--line);border-radius:var(--radius);font:500 12px/1.2 inherit;
@@ -197,6 +200,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <input type="range" id="yr" min="0" max="12" value="12" step="1">
         <output id="yrv">2026</output>
       </div>
+      <div class="capnote" id="capnote"></div>
       <div class="row">
         <button id="theme">Dark</button>
         <button id="labels">Labels</button>
@@ -536,7 +540,11 @@ yr.addEventListener('input', ()=>{
   const k = 1 - off/12;
   map.setPaintProperty('bld-fill','fill-opacity', dupCase(0.18*k));
   map.setPaintProperty('bld-line','line-opacity', dupCase(0.9*k));
+  reportCapture();
 });
+map.on('moveend', ()=>{ capCache.clear(); const el=document.getElementById('capnote');
+                        if(el) el.textContent=''; warmCaptures(); });
+map.on('load', warmCaptures);
 
 /* ---------- global height, read live from COGs ----------
    The official tile index is a 366 MB GeoPackage, far too large to ship. The tile
@@ -752,6 +760,59 @@ on('labels','click',()=>{
     if(map.getLayer(id)) map.setLayoutProperty(id,'visibility', labelsOn?'visible':'none');
   const b = document.getElementById('labels'); if(b) b.textContent = labelsOn?'Labels':'Labels off';
 });
+
+/* ---------- which years are actually different pictures? ----------
+   MEASURED over one dense Imbaba tile by hashing the bytes: 2014, 2015 and 2016 are
+   the SAME image, and so are 2025 and 2026 - 13 year options, 10 real captures. That
+   is why moving the slider sometimes changed nothing, which looked like a bug in the
+   app and was in fact the archive.
+
+   Esri redirects each release id to whichever capture actually covers the tile, so
+   which years collide DEPENDS ON WHERE YOU ARE and cannot be baked in at build time.
+   fetch() exposes the post-redirect URL, so the capture is resolved for the tile
+   under the map centre and years sharing an id are reported as the same photograph. */
+const capCache = new Map();
+function centreTile(){
+  const c = map.getCenter(), z = Math.min(Math.max(Math.round(map.getZoom()), 10), 17);
+  const n = 2 ** z;
+  return {z, x: Math.floor((c.lng + 180) / 360 * n),
+          y: Math.floor((1 - Math.asinh(Math.tan(c.lat * Math.PI/180)) / Math.PI) / 2 * n)};
+}
+async function captureOf(year, t){
+  const key = year + '/' + t.z + '/' + t.x + '/' + t.y;
+  if(capCache.has(key)) return capCache.get(key);
+  const url = wbUrl(year).replace('{z}', t.z).replace('{x}', t.x).replace('{y}', t.y);
+  let id = null;
+  try{
+    const r = await fetch(url);
+    if(r.ok){ const m = /\/tile\/(\d+)\//.exec(r.url); id = m ? m[1] : null; }
+  }catch(e){ id = null; }
+  capCache.set(key, id);
+  return id;
+}
+let capSeq = 0;
+async function reportCapture(){
+  const seq = ++capSeq, t = centreTile(), year = YEARS[yearIdx];
+  const id = await captureOf(year, t);
+  if(seq !== capSeq || !id) return;             // a newer request overtook this one
+  const same = [];
+  for(const y of YEARS){
+    if(y === year) continue;
+    const other = capCache.get(y + '/' + t.z + '/' + t.x + '/' + t.y);
+    if(other && other === id) same.push(y);
+  }
+  const el = document.getElementById('capnote');
+  if(!el) return;
+  el.textContent = same.length
+    ? 'same photograph as ' + same.join(', ') + ' here'
+    : '';
+}
+// resolve the neighbours quietly so a collision can be reported the moment it matters
+async function warmCaptures(){
+  const t = centreTile();
+  for(const y of YEARS) await captureOf(y, t);
+  reportCapture();
+}
 
 /* ---------- building vintage vs imagery year ----------
    MEASURED: the building layer does NOT change with the slider - 3,966 buildings
