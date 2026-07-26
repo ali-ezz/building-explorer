@@ -19,12 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
-
----
-
-The MIT grant above covers the code of this viewer only.
-
-The map data it displays is published by third parties under their own licences and
-is NOT covered by this grant. See ATTRIBUTION.md. Attribution for those layers is a
-licence condition; the in-app (i) control and "Data & licences" panel carry it, and
-they must be kept in any copy you publish or redistribute.

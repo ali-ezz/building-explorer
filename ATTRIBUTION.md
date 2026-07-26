@@ -1,5 +1,8 @@
 # Attribution and data licences
 
+> The MIT licence in `LICENSE` covers the viewer code only. Every layer below keeps
+> its own licence and is not affected by that grant.
+
 The Global Building Explorer displays data published by third parties. **Crediting
 them is a condition of those licences, not a courtesy.** The application carries the
 credits in two places — the (i) control on the map and the "Data & licences" section
