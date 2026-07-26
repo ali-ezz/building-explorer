@@ -1,0 +1,1273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Global Building Explorer</title>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+<style>
+/* Design: a technical instrument, not a brochure. Neutrals carry a slight blue bias
+   to sit with satellite imagery; one accent for interaction; data QUALITY is encoded
+   in colour so measured / estimated / unavailable are separable at a glance. */
+:root{
+  --bg:#0a0e13; --panel:#111820; --raise:#18212b; --line:#222d3a; --line-soft:#1a232d;
+  --ink:#e7eef7; --dim:#8593a6; --faint:#5a6778;
+  --accent:#4d9fe8; --accent-dim:#2b5f8c;
+  --measured:#6fcf97; --estimated:#e0a34a; --absent:#5a6778;
+  --radius:7px;
+}
+/* Light tokens, defined once and applied from either signal. The explicit
+   data-theme attribute must WIN over the OS preference, in both directions -
+   previously only the media query existed, so the toggle changed nothing. */
+@media (prefers-color-scheme: light){
+  :root:not([data-theme]){ --bg:#eef2f6; --panel:#fff; --raise:#f3f6f9; --line:#d8e0e8;
+    --line-soft:#e6ecf2; --ink:#16202b; --dim:#5a6b7d; --faint:#8797a8; --accent:#1f6fb2; }
+}
+:root[data-theme="light"]{ --bg:#eef2f6; --panel:#fff; --raise:#f3f6f9; --line:#d8e0e8;
+  --line-soft:#e6ecf2; --ink:#16202b; --dim:#5a6b7d; --faint:#8797a8; --accent:#1f6fb2; }
+:root[data-theme="dark"]{ --bg:#0a0e13; --panel:#111820; --raise:#18212b; --line:#222d3a;
+  --line-soft:#1a232d; --ink:#e7eef7; --dim:#8593a6; --faint:#5a6778; --accent:#4d9fe8; }
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+  font:13.5px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased}
+#app{display:flex;height:100%}
+#map{flex:1;min-width:0}
+aside{width:392px;flex:0 0 392px;background:var(--panel);
+  border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+/* ---- phone / small tablet: full-bleed map with a draggable bottom sheet ----
+   The previous layout gave the panel a fixed 52% of the screen, so the map was tiny
+   and every record had to be scrolled inside a cramped box. Now the map fills the
+   viewport and the sheet snaps between peek / half / full. */
+@media (max-width:820px){
+  #app{display:block;position:relative}
+  #map{position:absolute;inset:0;height:100%}
+  aside{
+    position:absolute;left:0;right:0;bottom:0;width:auto;flex:none;
+    height:var(--sheet,42vh);max-height:92vh;
+    border-left:none;border-top:1px solid var(--line);
+    border-radius:16px 16px 0 0;box-shadow:0 -8px 28px rgba(0,0,0,.35);
+    transition:height .22s cubic-bezier(.4,0,.2,1);z-index:5;
+  }
+  .grab{display:block;padding:9px 0 5px;cursor:grab;touch-action:none;flex:none}
+  .grab i{display:block;width:38px;height:4px;border-radius:99px;
+    background:var(--line);margin:0 auto}
+  header{padding:2px 16px 10px}
+  h1{font-size:14px}
+  .sub{display:none}
+  .tools{padding:10px 16px;gap:9px}
+  .row{gap:7px}
+  /* MEASURED at 500 px wide: these were 33 px, not the ~44 px this block claimed.
+     44 px is the smallest reliable touch target on both iOS and Android. */
+  button{padding:0 10px;min-height:44px;font-size:13px;min-width:0}
+  .field input{padding:0 11px;min-height:44px;font-size:16px} /* 16px stops iOS zoom */
+  /* MapLibre's own controls ship at 29 px */
+  .maplibregl-ctrl-group button{min-height:40px;width:40px}
+  #status{padding:10px 16px}
+  #body{padding:14px 16px 28px;-webkit-overflow-scrolling:touch}
+  td{padding:11px 0}
+  .s-item{padding:13px 11px}
+  .legend{padding:10px 16px 14px}
+  .maplibregl-ctrl-bottom-right{bottom:calc(var(--sheet,42vh) + 6px)}
+  .maplibregl-ctrl-bottom-left{bottom:calc(var(--sheet,42vh) + 6px)}
+  .maplibregl-ctrl-attrib.maplibregl-compact-show{max-width:calc(100vw - 24px)}
+  .maplibregl-ctrl-top-left{top:6px}
+}
+@media (min-width:821px){ .grab{display:none} }
+@media (hover:none){ button:hover{border-color:var(--line)} }
+
+header{padding:15px 18px 13px;border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:14.5px;font-weight:600;letter-spacing:-.01em}
+.sub{margin:3px 0 0;font-size:11.5px;color:var(--dim)}
+
+.tools{padding:13px 18px;border-bottom:1px solid var(--line);display:flex;
+  flex-direction:column;gap:11px}
+.field{position:relative}
+.field input{width:100%;padding:9px 11px;background:var(--bg);color:var(--ink);
+  border:1px solid var(--line);border-radius:var(--radius);font-size:13px;
+  font-family:inherit;transition:border-color .12s}
+.field input::placeholder{color:var(--faint)}
+.field input:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+#sugg{position:absolute;left:0;right:0;top:calc(100% + 5px);z-index:30;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  overflow:hidden;display:none;box-shadow:0 10px 28px rgba(0,0,0,.35)}
+.s-item{padding:9px 11px;cursor:pointer;border-bottom:1px solid var(--line-soft);
+  display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
+.s-item:last-child{border-bottom:none}
+.s-item:hover{background:var(--raise)}
+.s-name{font-weight:600;font-size:12.5px}
+.s-kind{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 14%,transparent);padding:1px 5px;border-radius:3px}
+.s-where{font-size:11px;color:var(--dim);width:100%}
+.s-dim{color:var(--dim);cursor:default}
+.field kbd{position:absolute;right:9px;top:50%;transform:translateY(-50%);
+  font:10px/1 ui-monospace,monospace;color:var(--faint);border:1px solid var(--line);
+  border-radius:3px;padding:3px 5px;pointer-events:none}
+.field input:focus + kbd{opacity:0}
+
+.yr{display:flex;align-items:center;gap:11px}
+.yr label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.09em;
+  font-weight:600}
+.yr output{margin-left:auto;font:600 13px/1 ui-monospace,monospace;color:var(--accent);
+  font-variant-numeric:tabular-nums}
+input[type=range]{flex:1;accent-color:var(--accent);height:3px}
+
+.row{display:flex;gap:8px}
+button{flex:1;padding:8px 10px;background:var(--raise);color:var(--ink);
+  border:1px solid var(--line);border-radius:var(--radius);font:500 12px/1.2 inherit;
+  cursor:pointer;transition:border-color .12s,background .12s}
+button:hover{border-color:var(--accent-dim);background:var(--panel)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font-weight:600}
+
+#status{padding:11px 18px;border-bottom:1px solid var(--line);font-size:11.5px;
+  color:var(--dim);line-height:1.6}
+#status b{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
+#status a{color:var(--accent);text-decoration:none}
+#status a:hover{text-decoration:underline}
+
+#body{padding:16px 18px 22px;overflow-y:auto;flex:1}
+.empty{color:var(--dim);font-size:12.5px;line-height:1.7}
+.empty strong{color:var(--ink);font-weight:600}
+
+.bid{font:600 12px/1.4 ui-monospace,monospace;margin:0 0 8px;color:var(--ink);
+  word-break:break-all;letter-spacing:-.01em}
+.chip{display:inline-block;font-size:9.5px;padding:3px 8px;border-radius:99px;
+  text-transform:uppercase;letter-spacing:.07em;font-weight:600;
+  background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--accent)}
+
+/* grouped readout */
+.grp{margin-top:18px}
+.grp h2{margin:0 0 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--faint);font-weight:700}
+table{width:100%;border-collapse:collapse}
+td{padding:8px 0;border-bottom:1px solid var(--line-soft);vertical-align:baseline}
+tr:last-child td{border-bottom:none}
+td.k{color:var(--dim);width:47%;font-size:12.5px}
+td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
+.num{font-family:ui-monospace,monospace;font-size:13px}
+
+.tag{font-size:9px;letter-spacing:.07em;text-transform:uppercase;padding:2px 5px;
+  border-radius:3px;margin-left:6px;font-weight:700;vertical-align:1px}
+.t-est{color:var(--estimated);background:color-mix(in srgb,var(--estimated) 14%,transparent)}
+.t-part{color:var(--estimated);background:color-mix(in srgb,var(--estimated) 14%,transparent)}
+.na{color:var(--absent);font-style:italic;font-weight:400}
+.why{display:block;text-align:left;color:var(--faint);font-size:10.5px;margin-top:4px;
+  line-height:1.5;font-weight:400;font-variant-numeric:normal}
+
+.note{margin-top:14px;padding:10px 12px;border-radius:var(--radius);font-size:11.5px;
+  line-height:1.55;border-left:2px solid}
+.note-warn{background:color-mix(in srgb,var(--estimated) 8%,transparent);
+  border-color:var(--estimated);color:color-mix(in srgb,var(--estimated) 60%,var(--ink))}
+.note-info{background:color-mix(in srgb,var(--accent) 7%,transparent);
+  border-color:var(--accent);color:color-mix(in srgb,var(--accent) 55%,var(--ink))}
+
+.skel{height:11px;border-radius:3px;background:linear-gradient(90deg,
+  var(--line-soft) 25%,var(--line) 37%,var(--line-soft) 63%);
+  background-size:400% 100%;animation:sh 1.3s ease infinite;display:inline-block;width:62px}
+@keyframes sh{0%{background-position:100% 50%}100%{background-position:0 50%}}
+@media (prefers-reduced-motion:reduce){.skel{animation:none}}
+
+.legend{padding:11px 18px;border-top:1px solid var(--line);font-size:10.5px;
+  color:var(--faint);display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.legend i{width:7px;height:7px;border-radius:2px;display:inline-block;margin-right:5px}
+.maplibregl-ctrl-attrib{font-size:9.5px}
+.maplibregl-ctrl-attrib a{color:var(--dim)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="map"></div>
+  <aside>
+    <div class="grab" id="grab" aria-label="Drag to resize panel"><i></i></div>
+    <header>
+      <h1>Global Building Explorer</h1>
+      <p class="sub">Every building on Earth · streamed, not stored</p>
+    </header>
+    <div class="tools">
+      <div class="field">
+        <input type="text" id="place" placeholder="Search any place on Earth">
+        <kbd>/</kbd>
+      </div>
+      <div class="yr">
+        <label for="yr">Imagery</label>
+        <input type="range" id="yr" min="0" max="12" value="12" step="1">
+        <output id="yrv">2026</output>
+      </div>
+      <div class="row">
+        <button id="theme">Dark</button>
+        <button id="labels">Labels</button>
+      </div>
+    </div>
+    <div id="status">Loading…</div>
+    <div id="body"><p class="empty"><strong>Click any building</strong> to read its record:
+      footprint, neighbours, height, floors and population share — computed live,
+      anywhere on Earth.</p></div>
+    <div class="legend">
+      <span><i style="background:var(--measured)"></i>measured</span>
+      <span><i style="background:var(--estimated)"></i>estimated</span>
+      <span><i style="background:var(--absent)"></i>unavailable</span>
+      <span style="margin-left:auto"><a href="#" id="about" style="color:var(--dim)">About the data</a></span>
+    </div>
+  </aside>
+</div>
+<script>
+const BASEMAPS = {"2014": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/5844/{level}/{row}/{col}", "2015": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/28163/{level}/{row}/{col}", "2016": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/18966/{level}/{row}/{col}", "2017": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/25521/{level}/{row}/{col}", "2018": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/23448/{level}/{row}/{col}", "2019": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/4756/{level}/{row}/{col}", "2020": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/29260/{level}/{row}/{col}", "2021": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/26120/{level}/{row}/{col}", "2022": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/45134/{level}/{row}/{col}", "2023": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/56102/{level}/{row}/{col}", "2024": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/16453/{level}/{row}/{col}", "2025": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/13192/{level}/{row}/{col}", "2026": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/32246/{level}/{row}/{col}"};
+const YEARS = Object.keys(BASEMAPS).map(Number).sort((a,b)=>a-b);
+// MEASURED over one dense Imbaba bbox: Overture tiles 342 buildings, Overture exact
+// parquet 367, our own direct GOB u MS fetch 728, and THIS source 1,071. It is the
+// full Google + Microsoft union rather than a thinned conflation, 208 GB, maxzoom 15,
+// and it carries bf_source, confidence and area_in_meters per building.
+const PMT = 'https://data.source.coop/vida/google-microsoft-open-buildings/pmtiles/go_ms_building_footprints.pmtiles';
+const BLD_LAYER = 'building_footprints';
+// MEASURED per max-zoom tile: VIDA carries 3,208 buildings over Imbaba but ZERO in
+// Beijing and Shanghai, and only 84/147/142 in Berlin/Paris/New York - Google Open
+// Buildings does not cover China or most of the global north. Overture has 3,819 in
+// Beijing and 5,118 in Paris via OpenStreetMap, but roughly half of VIDA's density
+// in dense informal fabric. Neither is sufficient alone, so both are drawn.
+const PMTOVT = 'https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-07-22.0/buildings.pmtiles';
+const TILEBASE = 'https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-07-22.0/';
+const PMTROAD  = TILEBASE + 'transportation.pmtiles';
+const PMTDIV   = TILEBASE + 'divisions.pmtiles';
+
+/* ---------- reading a JSON string property from inside the style ----------
+   Several Overture fields are JSON serialised into a single string: `names`,
+   `taxonomy`, `local_type`. Pulling a value out of one used to mean decoding tiles
+   in JavaScript and drawing a hand-rolled overlay, which threw away MapLibre's zoom
+   handling, placement and collision - that is what made labels pile up in corners.
+   String expressions do it inside the style instead, so rendering stays native. */
+function pick(tok, prop){
+  return ['let', 'p', ['index-of', tok, ['coalesce', ['get', prop], '']],
+    ['case', ['>=', ['var','p'], 0],
+      ['let', 's', ['+', ['var','p'], tok.length],
+        ['slice', ['coalesce', ['get', prop], ''], ['var','s'],
+          ['+', ['var','s'],
+            ['index-of', '"', ['slice', ['coalesce', ['get', prop], ''], ['var','s']]]]]],
+      '']];
+}
+
+/* MEASURED over 15 cities (Cairo, Tokyo, Beijing, Moscow, Delhi, Bangkok, Seoul,
+   Athens, Tehran, Paris, Lagos, Sao Paulo, Istanbul, Tel Aviv, Kyiv):
+       divisions       60% carry names.common.en
+       roads           39%
+       POIs             0%  - places have no language map at all, only a primary name
+   Adding a '*-Latn' romanisation rung lifts the readable share by ~0.1pt; nothing
+   else in the data helps. So the rest falls back to the local name, exactly as
+   Google does in these cities. Readable-in-Latin-script works out at 82% of
+   divisions, 70% of roads, 66% of POIs - the residue is Greek, Persian, Japanese,
+   Korean, Thai and Hebrew, and no expression can invent a translation. */
+const NAME = ['let', 'en', pick('"en":"', 'names'),
+  ['case', ['!=', ['var','en'], ''], ['var','en'],
+    ['let', 'la', pick('-Latn":"', 'names'),
+      ['case', ['!=', ['var','la'], ''], ['var','la'],
+        ['coalesce', ['get', '@name'], '']]]]];
+
+// Overture's POI taxonomy is a JSON string whose `hierarchy` array starts with one
+// of exactly 13 top-level groups (counted over 57,308 POIs in six cities). That is
+// the grouping the icon colours key off.
+/* ---------- label hierarchy ----------
+   One builder so every label layer shares the same halo, fade and padding, and the
+   differences between them stay visible as data rather than buried in repetition. */
+// text colour per layer, [dark theme, light theme]
+/* Script test. U+0250 sits above Latin and Latin Extended and below Greek,
+   Cyrillic, Arabic, Hebrew, Thai, CJK and Hangul, so a plain code-point comparison
+   separates readable names from unreadable ones. VERIFIED in the browser over
+   Imbaba: 19 Latin / 36 non-Latin, summing exactly to the 55 named features in view.
+   Every character is tested, not just the first, because MIXED names exist - one
+   reading 'Pery Air ...' passed a first-character test and still drew Arabic.
+   Slicing past the end of a string yields '', which compares below the threshold,
+   so short names are unaffected. */
+const LATIN_MAX = '\u0250';
+const isLatinAll = e => ['all'].concat(
+  Array.from({length:64}, (_, i) => ['<', ['slice', e, i, i+1], LATIN_MAX]));
+
+/* ---------- romanisation ----------
+   Dropping every name without an English variant left Athens, Tehran and Moscow
+   almost blank - 1.2% of Athens streets survived. Most of those scripts are
+   alphabets, so they convert character by character. This is TRANSLITERATION, not
+   translation: a Greek street comes out 'Odos Ermou', not 'Hermes Street'. That is
+   the same thing Google does for these scripts, and it is the difference between a
+   name you can read aloud and match to a sign, and no name at all.
+
+   MapLibre has no string-replace, but `match` compiles to a hash lookup, so one
+   match per character position romanises the whole string in 48 lookups. The table
+   is written once and the expression built from it at load, which keeps the file
+   small.
+
+   NOT covered, and it cannot be with a character table: Chinese and Japanese Han
+   need a per-word dictionary, and Korean syllables are 11,172 precomposed code
+   points. Those names still blank out. */
+const ROMAN = {
+ // Greek
+ 'α':'a','β':'v','γ':'g','δ':'d','ε':'e','ζ':'z','η':'i','θ':'th','ι':'i','κ':'k',
+ 'λ':'l','μ':'m','ν':'n','ξ':'x','ο':'o','π':'p','ρ':'r','σ':'s','ς':'s','τ':'t',
+ 'υ':'u','φ':'f','χ':'ch','ψ':'ps','ω':'o','ά':'a','έ':'e','ή':'i','ί':'i','ό':'o',
+ 'ύ':'u','ώ':'o','ϊ':'i','ϋ':'y','ΐ':'i','ΰ':'y',
+ 'Α':'A','Β':'V','Γ':'G','Δ':'D','Ε':'E','Ζ':'Z','Η':'I','Θ':'Th','Ι':'I','Κ':'K',
+ 'Λ':'L','Μ':'M','Ν':'N','Ξ':'X','Ο':'O','Π':'P','Ρ':'R','Σ':'S','Τ':'T','Υ':'Y',
+ 'Φ':'F','Χ':'Ch','Ψ':'Ps','Ω':'O','Ά':'A','Έ':'E','Ή':'I','Ί':'I','Ό':'O','Ύ':'U',
+ 'Ώ':'O',
+ // Cyrillic (Russian, Ukrainian, Serbian)
+ 'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i',
+ 'й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t',
+ 'у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ъ':'','ы':'y',
+ 'ь':'','э':'e','ю':'yu','я':'ya','і':'i','ї':'yi','є':'ye','ґ':'g','ў':'w','ј':'j',
+ 'љ':'lj','њ':'nj','ћ':'c','џ':'dz','ђ':'dj',
+ 'А':'A','Б':'B','В':'V','Г':'G','Д':'D','Е':'E','Ё':'Yo','Ж':'Zh','З':'Z','И':'I',
+ 'Й':'Y','К':'K','Л':'L','М':'M','Н':'N','О':'O','П':'P','Р':'R','С':'S','Т':'T',
+ 'У':'U','Ф':'F','Х':'Kh','Ц':'Ts','Ч':'Ch','Ш':'Sh','Щ':'Shch','Ъ':'','Ы':'Y',
+ 'Ь':'','Э':'E','Ю':'Yu','Я':'Ya','І':'I','Ї':'Yi','Є':'Ye','Ґ':'G','Ў':'W','Ј':'J',
+ 'Љ':'Lj','Њ':'Nj','Ћ':'C','Џ':'Dz','Ђ':'Dj',
+ // Arabic and Persian
+ 'ا':'a','أ':'a','إ':'i','آ':'a','ب':'b','ت':'t','ث':'th','ج':'j','ح':'h','خ':'kh',
+ 'د':'d','ذ':'dh','ر':'r','ز':'z','س':'s','ش':'sh','ص':'s','ض':'d','ط':'t','ظ':'z',
+ 'ع':'a','غ':'gh','ف':'f','ق':'q','ك':'k','ل':'l','م':'m','ن':'n','ه':'h','و':'w',
+ 'ي':'y','ى':'a','ء':'','ة':'a','ئ':'y','ؤ':'w','لا':'la',
+ 'پ':'p','چ':'ch','ژ':'zh','گ':'g','ک':'k','ی':'y','ٔ':'',
+ 'َ':'','ُ':'','ِ':'','ْ':'','ّ':'','ً':'','ٌ':'','ٍ':'','ٰ':'','ـ':'',
+ '٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9',
+ '۰':'0','۱':'1','۲':'2','۳':'3','۴':'4','۵':'5','۶':'6','۷':'7','۸':'8','۹':'9',
+ '،':',','؛':';','؟':'?',
+ // Hebrew
+ 'א':'a','ב':'v','ג':'g','ד':'d','ה':'h','ו':'v','ז':'z','ח':'ch','ט':'t','י':'y',
+ 'כ':'k','ך':'k','ל':'l','מ':'m','ם':'m','נ':'n','ן':'n','ס':'s','ע':'a','פ':'p',
+ 'ף':'f','צ':'ts','ץ':'ts','ק':'k','ר':'r','ש':'sh','ת':'t','׳':'','״':'',
+ // Thai
+ 'ก':'k','ข':'kh','ฃ':'kh','ค':'kh','ฅ':'kh','ฆ':'kh','ง':'ng','จ':'ch','ฉ':'ch',
+ 'ช':'ch','ซ':'s','ฌ':'ch','ญ':'y','ฎ':'d','ฏ':'t','ฐ':'th','ฑ':'th','ฒ':'th',
+ 'ณ':'n','ด':'d','ต':'t','ถ':'th','ท':'th','ธ':'th','น':'n','บ':'b','ป':'p',
+ 'ผ':'ph','ฝ':'f','พ':'ph','ฟ':'f','ภ':'ph','ม':'m','ย':'y','ร':'r','ฤ':'rue',
+ 'ล':'l','ฦ':'lue','ว':'w','ศ':'s','ษ':'s','ส':'s','ห':'h','ฬ':'l','อ':'o','ฮ':'h',
+ 'ะ':'a','ั':'a','า':'a','ำ':'am','ิ':'i','ี':'i','ึ':'ue','ื':'ue','ุ':'u','ู':'u',
+ 'เ':'e','แ':'ae','โ':'o','ใ':'ai','ไ':'ai','ๅ':'a','ํ':'','็':'','่':'','้':'',
+ '๊':'','๋':'','์':'','ๆ':'','ฯ':'','๐':'0','๑':'1','๒':'2','๓':'3','๔':'4',
+ '๕':'5','๖':'6','๗':'7','๘':'8','๙':'9',
+ // Devanagari
+ 'क':'k','ख':'kh','ग':'g','घ':'gh','ङ':'ng','च':'ch','छ':'chh','ज':'j','झ':'jh',
+ 'ञ':'ny','ट':'t','ठ':'th','ड':'d','ढ':'dh','ण':'n','त':'t','थ':'th','द':'d',
+ 'ध':'dh','न':'n','प':'p','फ':'ph','ब':'b','भ':'bh','म':'m','य':'y','र':'r',
+ 'ल':'l','व':'v','श':'sh','ष':'sh','स':'s','ह':'h','अ':'a','आ':'a','इ':'i',
+ 'ई':'i','उ':'u','ऊ':'u','ए':'e','ऐ':'ai','ओ':'o','औ':'au','ा':'a','ि':'i',
+ 'ी':'i','ु':'u','ू':'u','े':'e','ै':'ai','ो':'o','ौ':'au','ं':'n','ः':'h',
+ '्':'','़':'','ृ':'ri','ॉ':'o','ऑ':'o','०':'0','१':'1','२':'2','३':'3','४':'4',
+ '५':'5','६':'6','७':'7','८':'8','९':'9','।':''
+};
+const NAME_LEN = 48;
+// one hash lookup per character position; unmapped characters pass through unchanged
+const romanise = e => {
+  const one = i => {
+    const c = ['slice', e, i, i + 1];
+    const m = ['match', c];
+    for(const k in ROMAN){ m.push(k, ROMAN[k]); }
+    m.push(c);
+    return m;
+  };
+  const parts = ['concat'];
+  for(let i = 0; i < NAME_LEN; i++) parts.push(one(i));
+  return parts;
+};
+
+/* English first, then romanised, then nothing. The second script test matters: a
+   name romanises only as far as the table reaches, so anything left in Han or
+   Hangul is still dropped rather than shown half-converted. */
+const NAME_EN = ['let', 'n', NAME,
+  ['case', isLatinAll(['var','n']), ['var','n'],
+    ['let', 'r', romanise(['var','n']),
+      ['case', isLatinAll(['var','r']), ['var','r'], '']]]];
+
+// [dark theme, light theme]; admin names take the default white / near-black
+const LBL_INK = {
+  'road-major':['#ffffff','#132433'], 'road-minor':['#eef5fb','#1b2f42']
+};
+function lblInk(id, d){
+  const p = LBL_INK[id]; return p ? (d?p[0]:p[1]) : (d?'#ffffff':'#0f1f2e');
+}
+const LBL_IDS = [];
+function sym(o){
+  LBL_IDS.push(o.id);
+  // ease in over the first three-quarters of a zoom level instead of popping on
+  const fade = o.minzoom == null ? 1
+    : ['interpolate',['linear'],['zoom'], o.minzoom, 0, o.minzoom + 0.75, 1];
+  const L = {
+    id:o.id, type:'symbol', source:o.src, 'source-layer':o.lyr,
+    layout:Object.assign({
+      'symbol-placement': o.line ? 'line' : 'point',
+      'text-field': NAME_EN,
+      'text-font': ['Noto Sans ' + (o.font || 'Regular')],
+      'text-size': ['interpolate',['linear'],['zoom']].concat([].concat(...o.size)),
+      'text-max-width': o.wrap || 8,
+      'text-padding': o.pad == null ? 3 : o.pad,
+      'text-letter-spacing': o.track || 0,
+      'symbol-sort-key': o.sort == null ? 50 : o.sort
+    }, o.upper ? {'text-transform':'uppercase'} : {}, o.layout || {}),
+    paint:Object.assign({
+      'text-color': lblInk(o.id, true),
+      'text-halo-color':'rgba(4,10,16,.80)',
+      'text-halo-width': o.haloW == null ? 1.45 : o.haloW,
+      // a soft glow rather than a hard outline - the same trick Google uses to keep
+      // white type legible over bright roofs and dark shadow in one image
+      'text-halo-blur': 0.75,
+      'text-opacity': fade
+    }, o.icon ? {'icon-opacity': fade} : {}, o.paint || {})
+  };
+  if(o.minzoom != null) L.minzoom = o.minzoom;
+  if(o.maxzoom != null) L.maxzoom = o.maxzoom;
+  if(o.filter) L.filter = o.filter;
+  return L;
+}
+const hasName = ['has','names'];
+const isSub  = v => ['match', ['get','subtype'], v, true, false];
+const isCls  = v => ['match', ['get','class'],   v, true, false];
+/* A polygon the de-duplicator has flagged is drawn at zero opacity rather than
+   filtered out: setFilter forces MapLibre to re-parse the whole source on every
+   pan, feature-state does not. */
+const dupCase = v => ['case', ['boolean', ['feature-state','dup'], false], 0, v];
+
+const MSH = 'https://opendata.aiforgood.ai/building-density/v1/{q}/12-39-p3_ensemble_downsampled/{f}';
+let yearIdx = YEARS.length - 1;
+
+const proto = new pmtiles.Protocol();
+maplibregl.addProtocol('pmtiles', proto.tile);
+
+function wbUrl(y){
+  return (BASEMAPS[y]||BASEMAPS[YEARS[YEARS.length-1]])
+    .replace('{level}','{z}').replace('{row}','{y}').replace('{col}','{x}');
+}
+
+const map = new maplibregl.Map({
+  container:'map', center:[31.208,30.078], zoom:15, maxZoom:19,
+  // the position lives in the URL, so a view can be sent to a colleague as a link
+  hash:'at',
+  attributionControl:false,   // added explicitly below in compact form
+  style:{version:8, sources:{
+      sat:{type:'raster', tiles:[wbUrl(YEARS[YEARS.length-1])], tileSize:256, maxzoom:17,
+           attribution:'Imagery: Esri · Buildings: Google Open Buildings + Microsoft, combined by VIDA (CC BY-4.0/ODbL) · Roads: Overture · Height: Microsoft (CDLA-2.0)'},
+      bld:{type:'vector', url:'pmtiles://'+PMT},
+      ovt:{type:'vector', url:'pmtiles://'+PMTOVT},
+      rds:{type:'vector', url:'pmtiles://'+PMTROAD},
+      div:{type:'vector', url:'pmtiles://'+PMTDIV},
+
+      selsrc:{type:'geojson', data:{type:'FeatureCollection',features:[]}}
+    },
+    glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    layers:[
+      {id:'sat', type:'raster', source:'sat'},
+      // Overture underneath: fills China, Europe and North America where the primary
+      // source is empty. Same styling, so a user sees "buildings", not two datasets.
+      {id:'ovt-fill', type:'fill', source:'ovt', 'source-layer':'building',
+       minzoom:12, paint:{'fill-color':'#5aa9e6','fill-opacity':dupCase(0.16)}},
+      {id:'ovt-line', type:'line', source:'ovt', 'source-layer':'building',
+       minzoom:12, paint:{'line-color':'#5aa9e6','line-width':0.7,
+         'line-opacity':dupCase(0.75)}},
+      {id:'bld-fill', type:'fill', source:'bld', 'source-layer':BLD_LAYER,
+       minzoom:12, paint:{'fill-color':'#5aa9e6','fill-opacity':dupCase(0.18)}},
+      // hover feedback, driven by feature-state
+      {id:'bld-hover', type:'fill', source:'bld', 'source-layer':BLD_LAYER,
+       minzoom:12, filter:['==',['id'],''],
+       paint:{'fill-color':'#9ad4ff','fill-opacity':0.42}},
+      {id:'ovt-hover', type:'fill', source:'ovt', 'source-layer':'building',
+       minzoom:12, filter:['==',['id'],''],
+       paint:{'fill-color':'#9ad4ff','fill-opacity':0.42}},
+      {id:'bld-line', type:'line', source:'bld', 'source-layer':BLD_LAYER,
+       minzoom:12, paint:{'line-color':'#5aa9e6','line-width':0.8,
+         'line-opacity':dupCase(0.9)}},
+      {id:'sel-fill', type:'fill', source:'selsrc',
+       paint:{'fill-color':'#ffd166','fill-opacity':0.45}},
+      {id:'sel-line', type:'line', source:'selsrc',
+       paint:{'line-color':'#ffd166','line-width':2.8}},
+      /* ---------- LABELS ----------
+         Three things carry a name on this map and nothing else: countries,
+         governorates, and streets. Everything a general-purpose basemap adds on top
+         of that - shops, clinics, parks, rivers, bus stops, neighbourhood outlines -
+         is noise over a building survey, and it was noise in a language we could not
+         guarantee. Layer order is collision priority: MapLibre places symbol layers
+         in the order the style lists them, so a country outranks a governorate and a
+         governorate outranks a street. */
+      sym({id:'adm-country', src:'div', lyr:'division_area', minzoom:1, maxzoom:7.5,
+           filter:['all', hasName, isSub(['country','dependency'])],
+           font:'Bold', upper:true, track:0.22, wrap:6, sort:0,
+           size:[[1,10],[3,12],[6,14.5]], haloW:1.6}),
+      sym({id:'adm-region', src:'div', lyr:'division_area', minzoom:4,
+           filter:['all', hasName, isSub(['region'])],
+           font:'Bold', upper:true, track:0.14, wrap:7, sort:1,
+           size:[[4,9.5],[7,11.5],[11,13],[16,14]]}),
+      sym({id:'road-major', src:'rds', lyr:'segment', minzoom:11.5, line:true,
+           filter:['all', hasName, isCls(['motorway','trunk','primary','secondary'])],
+           sort:8, track:0.02, size:[[12,10],[15,11.5],[18,13]],
+           layout:{'symbol-spacing':300,'text-max-angle':38}}),
+      sym({id:'road-minor', src:'rds', lyr:'segment', minzoom:14.5, line:true,
+           filter:['all', hasName, isCls(['tertiary','residential','unclassified',
+                                          'living_street','pedestrian'])],
+           sort:10, size:[[15,9.5],[17,11],[19,12.5]],
+           layout:{'symbol-spacing':260,'text-max-angle':38}}),
+    ]}
+});
+map.addControl(new maplibregl.NavigationControl({showCompass:false}), 'top-left');
+map.addControl(new maplibregl.GeolocateControl({
+  positionOptions:{enableHighAccuracy:true}, trackUserLocation:true,
+  showUserHeading:true}), 'top-left');
+map.addControl(new maplibregl.ScaleControl({unit:'metric'}));
+
+// On a phone the full attribution string covered a third of the map. Compact mode
+// collapses it to an (i) that expands on tap - the credit is still one tap away,
+// which is what the licences require.
+map.addControl(new maplibregl.AttributionControl({compact:true}), 'bottom-right');
+// MapLibre opens the compact attribution EXPANDED on first load, which covered 370
+// of 390 px on a phone. Collapse it; the (i) still opens it, so the licence credit
+// stays one tap away as the licences require.
+map.on('load', ()=>{
+  const a = document.querySelector('.maplibregl-ctrl-attrib');
+  if(a) a.classList.remove('maplibregl-compact-show');
+});
+
+/* ---------- imagery year ---------- */
+const yr=document.getElementById('yr'), yrv=document.getElementById('yrv');
+yr.max = YEARS.length-1; yr.value = YEARS.length-1; yrv.textContent = YEARS[yearIdx];
+yr.addEventListener('input', ()=>{
+  yearIdx=+yr.value; yrv.textContent=YEARS[yearIdx];
+  // setTiles swaps the URL on the existing source; adding/removing sources races
+  // with in-flight tile loads (see the Leaflet version of this same bug).
+  map.getSource('sat').setTiles([wbUrl(YEARS[yearIdx])]);
+  // Fade the outlines as the imagery moves away from the building vintage.
+  const off = Math.min(Math.abs(vintageOffset()), 8);
+  const k = 1 - off/12;
+  map.setPaintProperty('bld-fill','fill-opacity', dupCase(0.18*k));
+  map.setPaintProperty('bld-line','line-opacity', dupCase(0.9*k));
+});
+
+/* ---------- global height, read live from COGs ----------
+   The official tile index is a 366 MB GeoPackage, far too large to ship. The tile
+   NAME is derivable from z11 slippy coordinates instead - verified on four
+   continents - so no index is needed. */
+function heightTile(lon, lat){
+  const n = 2**11;
+  const x = Math.floor((lon+180)/360*n);
+  const y = Math.floor((1 - Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n);
+  // Both numbers are ZERO-PADDED to 4 digits: L15-0585E-0954N.tif.
+  // Without padding this silently worked only where both happened to be 4 digits
+  // (Cairo, Lagos, Nairobi) and returned "no data" everywhere else - Lima, Sao Paulo,
+  // Sydney and Jakarta all failed until this was found.
+  const pad = v => String(v).padStart(4,'0');
+  return `L15-${pad(x)}E-${pad(n-1-y)}N.tif`;
+}
+/* ---------- geometry, computed client-side so it works ANYWHERE ----------
+   No pre-baking and no per-area preparation: area, perimeter, compactness and
+   touching-neighbour count are derived from the streamed tile geometry itself. */
+const R_EARTH = 6378137;
+function ringMetres(ring, lat0){
+  const kx = Math.cos(lat0*Math.PI/180) * 111320, ky = 110540;
+  return ring.map(([x,y]) => [x*kx, y*ky]);
+}
+function polyArea(ring){           // shoelace, metres^2
+  let a = 0;
+  for(let i=0, n=ring.length; i<n; i++){
+    const [x1,y1] = ring[i], [x2,y2] = ring[(i+1)%n];
+    a += x1*y2 - x2*y1;
+  }
+  return Math.abs(a/2);
+}
+function polyPerim(ring){
+  let p = 0;
+  for(let i=0, n=ring.length; i<n; i++){
+    const [x1,y1] = ring[i], [x2,y2] = ring[(i+1)%n];
+    p += Math.hypot(x2-x1, y2-y1);
+  }
+  return p;
+}
+function outerRing(f){
+  const g = f.geometry; if(!g) return null;
+  if(g.type === 'Polygon') return g.coordinates[0];
+  if(g.type === 'MultiPolygon') return g.coordinates[0][0];
+  return null;
+}
+function geomStats(f){
+  const ring = outerRing(f); if(!ring || ring.length < 4) return null;
+  let sy = 0; for(const p of ring) sy += p[1];
+  const lat0 = sy/ring.length;
+  const m = ringMetres(ring, lat0);
+  const a = polyArea(m), p = polyPerim(m);
+  return {area:a, perim:p, compact: p>0 ? (4*Math.PI*a)/(p*p) : 0, lat0};
+}
+/* Vector tiles CUT geometry at tile boundaries, so one building can arrive as two
+   or more pieces sharing a feature id. Measured live: using a single piece
+   under-reported area by 50%. Sum the pieces instead.
+   Perimeter and compactness are NOT summable - the cut edge is not a real wall -
+   so they are reported from the largest piece and flagged as partial. */
+/* Tiles clip geometry, so one building can arrive as several features. Grouping
+   them USED to be `all.filter(...)` per building - a full rescan each time, so
+   26,371 buildings at z14 meant ~700 million comparisons and refresh() froze the
+   page for 1,071 ms on every pan. Build the id -> parts map once instead. */
+function featKey(o){
+  return o.properties.id || (o.id!=null ? o.source+':'+o.id : null);
+}
+function partsIndex(all){
+  const m = new Map();
+  for(const o of all){
+    const id = featKey(o); if(!id) continue;
+    let a = m.get(id); if(!a) m.set(id, a = []);
+    a.push(o);
+  }
+  return m;
+}
+function geomStatsWhole(f, all, idx){
+  const id = featKey(f);
+  const own = geomStats(f);
+  if(!id || !own) return own ? {...own, parts:1, partial:false} : null;
+  const parts = idx ? (idx.get(id) || [f]) : all.filter(o => featKey(o) === id);
+  if(parts.length < 2) return {...own, parts:1, partial:false};
+  let area = 0, best = own;
+  for(const q of parts){
+    const g = geomStats(q); if(!g) continue;
+    area += g.area;
+    if(g.area > best.area) best = g;
+  }
+  return {area, perim: best.perim, compact: best.compact, lat0: best.lat0,
+          parts: parts.length, partial: true};
+}
+function bboxOf(ring){
+  let w=180,s=90,e=-180,n=-90;
+  for(const [x,y] of ring){ if(x<w)w=x; if(x>e)e=x; if(y<s)s=y; if(y>n)n=y; }
+  return [w,s,e,n];
+}
+/* Touching neighbours — EXACT.
+   bbox overlap only shortlists candidates; each survivor gets a real segment-to-
+   segment distance test. Affordable because this runs once for the clicked building,
+   not for every pair on screen. */
+function segDist(p1,p2,p3,p4){
+  const d=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+  function ptSeg(p,a,b){
+    const vx=b[0]-a[0], vy=b[1]-a[1], wx=p[0]-a[0], wy=p[1]-a[1];
+    const L=vx*vx+vy*vy; if(L===0) return d(p,a);
+    let t=(wx*vx+wy*vy)/L; t=Math.max(0,Math.min(1,t));
+    return d(p,[a[0]+t*vx, a[1]+t*vy]);
+  }
+  const o=(a,b,c)=>Math.sign((b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]));
+  if(o(p1,p2,p3)!==o(p1,p2,p4) && o(p3,p4,p1)!==o(p3,p4,p2)) return 0;
+  return Math.min(ptSeg(p1,p3,p4), ptSeg(p2,p3,p4), ptSeg(p3,p1,p2), ptSeg(p4,p1,p2));
+}
+function ringsWithin(rA, rB, lat0, tol){
+  const A=ringMetres(rA,lat0), B=ringMetres(rB,lat0);
+  for(let i=0;i<A.length-1;i++)
+    for(let j=0;j<B.length-1;j++)
+      if(segDist(A[i],A[i+1],B[j],B[j+1]) <= tol) return true;
+  return false;
+}
+function touchingCount(f, all){
+  const ring = outerRing(f); if(!ring) return null;
+  const [w,s,e,n] = bboxOf(ring);
+  const lat0 = (s+n)/2;
+  const dx = 1.0/(Math.cos(lat0*Math.PI/180)*111320), dy = 1.0/110540;
+  const TOL = 0.6;
+  let c = 0; const seen = new Set();
+  for(const o of all){
+    const oid = featKey(o);
+    if(oid && (oid === featKey(f) || seen.has(oid))) continue;
+    const r2 = outerRing(o); if(!r2) continue;
+    const [w2,s2,e2,n2] = bboxOf(r2);
+    if(w2 > e+dx || e2 < w-dx || s2 > n+dy || n2 < s-dy) continue;
+    if(ringsWithin(ring, r2, lat0, TOL)){ c++; if(oid) seen.add(oid); }
+  }
+  return c;
+}
+
+/* geotiff.js is 104 KB and is only needed once someone clicks a building, so it is
+   fetched on that click rather than on every page load. */
+let geotiffPromise = null;
+function loadGeoTIFF(){
+  if(!geotiffPromise) geotiffPromise = new Promise((res, rej) => {
+    const el = document.createElement('script');
+    el.src = 'https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js';
+    el.onload = () => res(window.GeoTIFF);
+    el.onerror = () => { geotiffPromise = null; rej(new Error('geotiff.js failed to load')); };
+    document.head.appendChild(el);
+  });
+  return geotiffPromise;
+}
+const tiffCache = {};
+async function heightAt(lon, lat, quarter){
+  const f = heightTile(lon, lat);
+  const url = MSH.replace('{q}', quarter).replace('{f}', f);
+  try{
+    const GT = await loadGeoTIFF();
+    if(!tiffCache[url]) tiffCache[url] = await GT.fromUrl(url);
+    const tif = await tiffCache[url];
+    const img = await tif.getImage();
+    const [ox,oy] = img.getOrigin(), [rx,ry] = img.getResolution();
+    const R = 20037508.342789244;
+    const mx = lon*R/180, my = Math.log(Math.tan((90+lat)*Math.PI/360))/(Math.PI/180)*R/180;
+    const px = Math.round((mx-ox)/rx), py = Math.round((my-oy)/ry);
+    if(px<0||py<0||px>=img.getWidth()||py>=img.getHeight()) return null;
+    // MEASURED BIAS: the height band is diluted by each pixel's unbuilt fraction.
+    // Over one neighbourhood, cells at 0-10% density read 2.4 m while cells at
+    // 60-100% read 8.9 m. One centre pixel therefore under-reports badly wherever
+    // the grid straddles open ground. Sample a window, keep only built-up cells.
+    const K = 5, x0 = Math.max(0,px-K), y0 = Math.max(0,py-K);
+    const x1 = Math.min(img.getWidth(), px+K+1), y1 = Math.min(img.getHeight(), py+K+1);
+    const d = await img.readRasters({window:[x0,y0,x1,y1]});
+    const dens = d[0], hh = d[1];
+    const pairs = [];
+    for(let i=0;i<hh.length;i++) if(hh[i] >= 0 && dens[i] > 0) pairs.push([hh[i]*100, dens[i]]);
+    if(!pairs.length) return null;
+    const dense = pairs.filter(q => q[1] >= 0.30);
+    const use = dense.length >= 3 ? dense : pairs;
+    const vals = use.map(q=>q[0]).sort((a,b)=>a-b);
+    const med = vals[Math.floor(vals.length/2)];
+    const localDens = pairs.reduce((a,q)=>a+q[1],0)/pairs.length;
+    return {height: med, density: localDens, n: use.length, gated: dense.length >= 3};
+  }catch(e){ return null; }
+}
+
+/* ---------- theme ----------
+   The page follows the OS by default; this overrides it, because a dark map is the
+   sensible default for satellite work and the OS setting often disagrees. */
+let dark = !window.matchMedia('(prefers-color-scheme: light)').matches;
+function applyTheme(){
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  if(window.map && map.getLayer('bld-line')){
+    map.setPaintProperty('bld-line','line-color', dark ? '#5aa9e6' : '#0b60a8');
+    map.setPaintProperty('bld-fill','fill-color', dark ? '#5aa9e6' : '#0b60a8');
+    // BUG THIS FIXES: 'place-lbl' stopped existing when the labels were rebuilt, so
+    // this loop matched nothing and the light theme left every label white on white.
+    // Driving it off the generated layer list means it cannot drift again.
+    for(const id of LBL_IDS) if(map.getLayer(id)){
+      map.setPaintProperty(id, 'text-color', lblInk(id, dark));
+      map.setPaintProperty(id, 'text-halo-color',
+        dark ? 'rgba(4,10,16,.80)' : 'rgba(255,255,255,.92)');
+    }
+  }
+  const b = document.getElementById('theme'); if(b) b.textContent = dark ? 'Light' : 'Dark';
+}
+on('theme','click',()=>{ dark=!dark; applyTheme(); });
+applyTheme();
+
+/* ---------- map labels on/off ---------- */
+let labelsOn = true;
+on('labels','click',()=>{
+  labelsOn = !labelsOn;
+  for(const id of LBL_IDS)
+    if(map.getLayer(id)) map.setLayoutProperty(id,'visibility', labelsOn?'visible':'none');
+  const b = document.getElementById('labels'); if(b) b.textContent = labelsOn?'Labels':'Labels off';
+});
+
+/* ---------- building vintage vs imagery year ----------
+   MEASURED: the building layer does NOT change with the slider - 3,966 buildings
+   with identical ids at both 2014 and 2026. It is one snapshot, sourced 2022-2024.
+   So on old imagery you are looking at TODAY'S buildings over YESTERDAY'S ground,
+   and some will sit on land that was still empty. Saying so is the fix; pretending
+   otherwise is what made the map look wrong. */
+const BLD_VINTAGE = 2023;
+function vintageOffset(){ return YEARS[yearIdx] - BLD_VINTAGE; }
+function vintageNote(){
+  const d = vintageOffset();
+  if(Math.abs(d) <= 1) return '';
+  return `<br><span style="color:var(--estimated)">outlines are ~${BLD_VINTAGE}, `
+       + `imagery is ${YEARS[yearIdx]} — ${Math.abs(d)} years apart, so some buildings `
+       + `shown may not have existed yet</span>`;
+}
+
+/* ---------- bottom sheet (phones) ----------
+   Three snap points instead of one fixed height, so the map is usable and a long
+   record is readable without fighting a cramped scroll box. Dragging the handle
+   resizes; tapping it cycles. Selecting a building auto-expands to half. */
+const SNAPS = [16, 45, 88];        // vh
+let snapIdx = 1;
+const isPhone = () => window.matchMedia('(max-width:820px)').matches;
+function setSheet(i, animate=true){
+  snapIdx = Math.max(0, Math.min(SNAPS.length-1, i));
+  const el = document.documentElement;
+  if(!animate) document.querySelector('aside').style.transition = 'none';
+  el.style.setProperty('--sheet', SNAPS[snapIdx] + 'vh');
+  if(!animate) requestAnimationFrame(()=>{ document.querySelector('aside').style.transition = ''; });
+  if(window.map) setTimeout(()=>map.resize(), 240);
+}
+(function initSheet(){
+  const grab = document.getElementById('grab');
+  if(!grab) return;
+  setSheet(1, false);
+  let startY = null, startVh = null, moved = false;
+  const vh = () => window.innerHeight / 100;
+  grab.addEventListener('pointerdown', e=>{
+    startY = e.clientY; startVh = SNAPS[snapIdx]; moved = false;
+    grab.setPointerCapture(e.pointerId);
+    document.querySelector('aside').style.transition = 'none';
+  });
+  grab.addEventListener('pointermove', e=>{
+    if(startY === null) return;
+    const dv = (startY - e.clientY) / vh();
+    if(Math.abs(dv) > 1) moved = true;
+    const next = Math.max(SNAPS[0], Math.min(SNAPS[SNAPS.length-1], startVh + dv));
+    document.documentElement.style.setProperty('--sheet', next + 'vh');
+  });
+  grab.addEventListener('pointerup', e=>{
+    if(startY === null) return;
+    document.querySelector('aside').style.transition = '';
+    const cur = parseFloat(getComputedStyle(document.documentElement)
+                  .getPropertyValue('--sheet')) || SNAPS[snapIdx];
+    if(!moved){ setSheet((snapIdx + 1) % SNAPS.length); }
+    else {
+      // snap to whichever stop is nearest where the finger stopped
+      let best = 0, bd = 1e9;
+      SNAPS.forEach((v,i)=>{ const d = Math.abs(v - cur); if(d < bd){ bd = d; best = i; } });
+      setSheet(best);
+    }
+    startY = null;
+  });
+  window.addEventListener('resize', ()=>{ if(isPhone()) setSheet(snapIdx, false); });
+})();
+
+/* ---------- de-duplication ----------
+   MEASURED at z17, share of Overture polygons sitting on a building the other
+   source had already drawn: Imbaba 74%, Cairo 90%, Lagos 71%. Two outlines for one
+   roof, drawn in the same colour, is what read as boxes stacked on a building.
+
+   Neither source can simply be dropped, because which one is better flips by
+   place: VIDA has 634 buildings over Imbaba against Overture's 208, but 32 over
+   Paris against Overture's 253, and none at all over Beijing. So the denser source
+   in the current view wins and only the OVERLAPPING polygons of the other are
+   hidden - the rest still fill real gaps.
+
+   Nothing is removed inside a source: within-source duplication measured ZERO at
+   IoU>0.6 across all six cities. An earlier centroid-in-bbox test said 41% for
+   Imbaba, but that fires on any neighbour in dense fabric and was wrong. */
+const SRC_OF = {'bld-fill':['bld', BLD_LAYER], 'ovt-fill':['ovt','building']};
+const DUP_IOU = 0.3;      // bbox intersection-over-union; will not fire on a neighbour
+const DUP_IOU_LOW = 0.12; // floor for the tighter centre-and-size rule below
+const CELL = 0.0004;      // ~40 m spatial hash
+
+// the idle handler queries once and both consumers read the same array
+let lastQuery = null;
+function queryBuildings(){
+  return map.queryRenderedFeatures({layers:BLD_LAYERS.filter(l=>map.getLayer(l))});
+}
+function bboxesOf(layer, pool){
+  const m = new Map();
+  for(const f of (pool ? pool.filter(x=>x.layer.id===layer)
+                       : map.queryRenderedFeatures({layers:[layer]}))){
+    if(f.id == null || !f.geometry) continue;
+    const g = f.geometry;
+    const rings = g.type === 'Polygon' ? g.coordinates
+                : g.type === 'MultiPolygon' ? (g.coordinates[0] || []) : null;
+    if(!rings || !rings[0]) continue;
+    let b = m.get(f.id);
+    if(!b) m.set(f.id, b = {id:f.id, x0:Infinity, y0:Infinity, x1:-Infinity, y1:-Infinity});
+    // tiles clip geometry, so one building can arrive in pieces - union them
+    for(const pt of rings[0]){
+      if(pt[0]<b.x0) b.x0=pt[0]; if(pt[0]>b.x1) b.x1=pt[0];
+      if(pt[1]<b.y0) b.y0=pt[1]; if(pt[1]>b.y1) b.y1=pt[1];
+    }
+  }
+  return [...m.values()];
+}
+// A second, tighter rule for the near-misses. The two sources trace the same roof
+// slightly differently, so a genuine duplicate can share as little as 15% of its
+// bounding box - which is also roughly what two ADJACENT buildings share, hence the
+// extra conditions: one centre must fall inside the other, and the two must be
+// comparable in size. Neighbours fail both.
+function centreIn(a, b){
+  const cx = (a.x0+a.x1)/2, cy = (a.y0+a.y1)/2;
+  return cx>=b.x0 && cx<=b.x1 && cy>=b.y0 && cy<=b.y1;
+}
+function areaOf(a){ return (a.x1-a.x0)*(a.y1-a.y0); }
+function isDup(a, b){
+  const i = iouOf(a, b);
+  if(i > DUP_IOU) return true;
+  if(i < DUP_IOU_LOW) return false;
+  const r = areaOf(a) / Math.max(areaOf(b), 1e-12);
+  // symmetric on purpose: with only centreIn(a,b) the test disagreed with itself
+  // depending on argument order, and a pair slipped through in Athens and Tokyo
+  return (centreIn(a,b) || centreIn(b,a)) && r > 0.4 && r < 2.5;
+}
+function iouOf(a, b){
+  const w = Math.min(a.x1,b.x1) - Math.max(a.x0,b.x0);
+  const h = Math.min(a.y1,b.y1) - Math.max(a.y0,b.y0);
+  if(w <= 0 || h <= 0) return 0;
+  const i = w*h, A = (a.x1-a.x0)*(a.y1-a.y0), B = (b.x1-b.x0)*(b.y1-b.y0);
+  return i / (A + B - i);
+}
+let dupIds = {bld:new Set(), ovt:new Set()};
+function dedupe(){
+  for(const k in SRC_OF) map.removeFeatureState({source:SRC_OF[k][0], sourceLayer:SRC_OF[k][1]});
+  dupIds = {bld:new Set(), ovt:new Set()};
+  if(map.getZoom() < 12) return;
+  const pool = lastQuery;
+  const V = bboxesOf('bld-fill', pool), O = bboxesOf('ovt-fill', pool);
+  if(!V.length || !O.length) return;             // nothing to conflict with
+  const vidaWins = V.length >= O.length;
+  const prim = vidaWins ? V : O, sec = vidaWins ? O : V;
+  const key = vidaWins ? 'ovt' : 'bld';
+  const [ssrc, slyr] = SRC_OF[vidaWins ? 'ovt-fill' : 'bld-fill'];
+  const grid = new Map();
+  for(const b of prim)
+    for(let i=Math.floor(b.x0/CELL); i<=Math.floor(b.x1/CELL); i++)
+    for(let j=Math.floor(b.y0/CELL); j<=Math.floor(b.y1/CELL); j++){
+      const k2 = i+':'+j; let c = grid.get(k2); if(!c) grid.set(k2, c = []); c.push(b);
+    }
+  for(const a of sec){
+    let hit = false;
+    for(let i=Math.floor(a.x0/CELL); i<=Math.floor(a.x1/CELL) && !hit; i++)
+    for(let j=Math.floor(a.y0/CELL); j<=Math.floor(a.y1/CELL) && !hit; j++)
+      for(const b of (grid.get(i+':'+j) || [])) if(isDup(a,b)){ hit = true; break; }
+    if(hit){
+      dupIds[key].add(a.id);
+      map.setFeatureState({source:ssrc, sourceLayer:slyr, id:a.id}, {dup:true});
+    }
+  }
+}
+// a hidden duplicate is still returned by queryRenderedFeatures, so the count,
+// the export, the click target and the neighbour test all have to skip it too
+const notDup = f => !(f.id != null && dupIds[f.source] && dupIds[f.source].has(f.id));
+
+/* ---------- status ---------- */
+function visibleBuildings(){
+  if(map.getZoom()<12) return null;
+  let f = (lastQuery || queryBuildings()).filter(notDup);
+  // one entry per id: tiles clip geometry at boundaries, so the same building can
+  // appear more than once (measured at 4.7% of features)
+  // VIDA publishes no properties.id - only bf_source, confidence and area - so
+  // keying on it stitched nothing and tile-boundary fragments were counted twice.
+  // The vector-tile feature id is present on both sources, so fall back to it.
+  const seen=new Set(); const out=[];
+  for(const x of f){
+    const id = x.properties.id || (x.id!=null ? x.source+':'+x.id : null);
+    if(id && seen.has(id)) continue;
+    if(id) seen.add(id);
+    out.push(x);
+  }
+  return out;
+}
+function centroid(f){
+  const g=f.geometry; if(!g) return null;
+  const rings = g.type==='Polygon'?g.coordinates:(g.coordinates||[])[0];
+  if(!rings||!rings[0]) return null;
+  let sx=0,sy=0,n=0; for(const p of rings[0]){sx+=p[0];sy+=p[1];n++;}
+  return n?[sx/n,sy/n]:null;
+}
+function refresh(){
+  const el=document.getElementById('status');
+  if(map.getZoom()<12){
+    el.innerHTML='Zoomed out too far for buildings — '
+      + '<a href="#" id="zin" style="color:var(--a1)">zoom in</a>'
+      + ' <span style="color:var(--faint)">(needs level 12+)</span>';
+    const a=document.getElementById('zin');
+    if(a) a.onclick=(ev)=>{ev.preventDefault(); map.easeTo({zoom:15,duration:600});};
+    return;
+  }
+  const f=visibleBuildings()||[];
+  const idx=partsIndex(f);
+  const areas=[]; for(const x of f){ const g=geomStatsWhole(x,f,idx); if(g) areas.push(g.area); }
+  areas.sort((a,b)=>a-b);
+  const med = areas.length? areas[Math.floor(areas.length/2)] : null;
+  const dens = (()=>{
+    const b = map.getBounds();
+    const km2 = (b.getEast()-b.getWest())*Math.cos(map.getCenter().lat*Math.PI/180)*111.320
+              * (b.getNorth()-b.getSouth())*110.540;
+    return km2>0 ? f.length/km2 : null;
+  })();
+  el.innerHTML =
+    `<b>${f.length.toLocaleString()}</b> buildings in view`
+    + ` · imagery <b>${YEARS[yearIdx]}</b>`
+    + (med!=null? `<br>median footprint <b>${med.toFixed(0)} m²</b>`:'')
+    + (dens!=null? ` · <b>${dens.toFixed(0)}</b> per km²`:'')
+    + vintageNote()
+    + (f.length? ` · <a href="#" id="dl" style="color:var(--a1)">export</a>`:'');
+  const a=document.getElementById('dl');
+  if(a) a.onclick=(ev)=>{ ev.preventDefault(); exportVisible(f); };
+}
+map.on('moveend', ()=>{ lastQuery = null; refresh(); });
+// setFeatureState repaints, which fires idle again; keying on the view stops the loop
+let lastView = '';
+map.on('idle', ()=>{
+  const c = map.getCenter();
+  lastQuery = queryBuildings();
+  /* The feature COUNT is part of the key, not just the position. Keying on position
+     alone meant that tiles finishing after the first idle were never de-duplicated -
+     a sweep of 15 cities found 19 surviving overlaps that way, all of them in views
+     where tiles landed late. */
+  const k = map.getZoom().toFixed(2)+'|'+c.lng.toFixed(5)+'|'+c.lat.toFixed(5)
+          + '|' + lastQuery.length;
+  if(k !== lastView){ lastView = k; dedupe(); }
+  refresh();
+  lastQuery = null;
+});
+
+/* ---------- population ----------
+   Every global population raster tested (WorldPop, Kontur, GHS-POP) is CORS-blocked,
+   so a browser cannot read one. What CAN be computed anywhere is each building's
+   SHARE of the local built volume (area x floors). Supply a known total for the view
+   - a census figure, a district statistic - and it is distributed by that share.
+   This is an allocation, never a measured headcount. */
+let areaPop = null;
+// The population input was removed from the UI; population is reported as a share of
+// local built volume instead. `on()` is used everywhere below so a missing element is
+// a no-op rather than a script-killing TypeError.
+function on(id, ev, fn){ const el = document.getElementById(id); if(el) el.addEventListener(ev, fn); }
+async function popShare(f, all){
+  const gs = geomStats(f); if(!gs) return null;
+  const c = centroid(f); if(!c) return null;
+  const h = await heightAt(c[0], c[1], '2023q4');
+  const floors = h ? Math.max(1, Math.round(h.height/3)) : 1;
+  const mine = gs.area * floors;
+  // Total volume across the view, using ONE height reading for the whole view: the
+  // 76 m grid cannot distinguish buildings within a block anyway, so per-building
+  // raster reads here would be false precision at high cost.
+  let total = 0;
+  for(const o of all){ const g2 = geomStats(o); if(g2) total += g2.area * floors; }
+  return total > 0 ? {share: mine/total, floors} : null;
+}
+
+/* ---------- export what is on screen, anywhere in the world ---------- */
+function exportVisible(feats){
+  const out = feats.map(f=>{
+    const g = geomStatsWhole(f, feats), c = centroid(f), p = f.properties;
+    let ds = p['@geometry_source'] || 'unknown';
+    try{ const s0=JSON.parse(p.sources||'[]'); if(s0.length) ds=s0[0].dataset; }catch(_){}
+    return {type:'Feature', geometry:f.geometry, properties:{
+      id:p.id||null, source:ds,
+      area_m2: g? +g.area.toFixed(1):null,
+      perimeter_m: g? +g.perim.toFixed(1):null,
+      compactness: g? +g.compact.toFixed(3):null,
+      tile_pieces: g? g.parts:null,
+      lon: c? +c[0].toFixed(6):null, lat: c? +c[1].toFixed(6):null,
+      _note:'geometry is tile-simplified; height must be read per building in-app'
+    }};
+  });
+  const blob = new Blob([JSON.stringify({type:'FeatureCollection',features:out})],
+                        {type:'application/geo+json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='buildings_view.geojson';
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+/* ---------- click a building ---------- */
+async function onBuildingClick(e){
+  // the top hit may be a hidden duplicate - fall through to the one drawn beneath
+  const f = (e.features || []).filter(notDup)[0];
+  if(!f) return;
+  const p = f.properties;
+  if(map.getSource('selsrc'))
+    map.getSource('selsrc').setData({type:'FeatureCollection',
+      features:[{type:'Feature', geometry:f.geometry, properties:{}}]});
+  const c=centroid(f)||[e.lngLat.lng,e.lngLat.lat];
+  const body=document.getElementById('body');
+  // On a phone, selecting a building while the sheet is collapsed would write the
+  // record somewhere the user cannot see. Lift it to the half stop.
+  if(typeof isPhone === 'function' && isPhone() && snapIdx === 0) setSheet(1);
+  const srcs = (()=>{ try{ return JSON.parse(p.sources||'[]'); }catch(_){ return []; } })();
+  const ds = p.bf_source || (srcs.length? srcs[0].dataset : (p['@geometry_source']||'unknown'));
+  const lic = srcs.length? (srcs[0].license||'') : '';
+  const rendered = map.queryRenderedFeatures({layers:BLD_LAYERS.filter(l=>map.getLayer(l))})
+                      .filter(notDup);
+  const gs = geomStatsWhole(f, rendered);
+  const nb = touchingCount(f, rendered);
+  const upd = srcs.length && srcs[0].update_time ? srcs[0].update_time.slice(0,10) : null;
+  body.innerHTML = `
+    <p class="bid">${p.id || (f.id!=null ? f.source+' · '+f.id : 'no identifier published')}</p>
+    <span class="chip">${ds}</span>
+
+    <div class="grp"><h2>Footprint · measured</h2><table>
+      ${p.area_in_meters?`<tr><td class="k">Area</td><td class="v"><span class="num">${(+p.area_in_meters).toFixed(0)}</span> m²
+        <span class="why">as published by the source</span></td></tr>`
+        : (gs?`<tr><td class="k">Area</td><td class="v"><span class="num">${gs.area.toFixed(0)}</span> m²</td></tr>`:'')}
+      ${p.confidence?`<tr><td class="k">Source confidence</td><td class="v"><span class="num">${(+p.confidence).toFixed(2)}</span></td></tr>`:''}
+      ${gs?`<tr><td class="k">Perimeter</td><td class="v"><span class="num">${gs.perim.toFixed(0)}</span> m${
+        gs.partial?'<span class="tag t-part">partial</span>':''}</td></tr>`:''}
+      ${gs?`<tr><td class="k">Compactness</td><td class="v"><span class="num">${gs.compact.toFixed(2)}</span>${
+        gs.partial?'<span class="tag t-part">partial</span>':''}</td></tr>`:''}
+      ${nb!=null?`<tr><td class="k">Touching neighbours</td><td class="v"><span class="num">${nb}</span></td></tr>`:''}
+      ${gs&&gs.partial?`<tr><td class="k">Split across tiles</td><td class="v"><span class="num">${gs.parts}</span> pieces
+        <span class="why">Area is summed and correct. Perimeter and compactness come from
+        the largest piece — a tile cut is not a real wall.</span></td></tr>`:''}
+    </table></div>
+
+    <div class="grp"><h2>Height &amp; occupancy · estimated</h2><table id="tbl">
+      <tr id="hrow"><td class="k">Height 2023</td><td class="v"><span class="skel"></span></td></tr>
+      <tr id="hrow0"><td class="k">Height 2020</td><td class="v"><span class="skel"></span></td></tr>
+      <tr id="flr"><td class="k">Floors</td><td class="v"><span class="skel"></span></td></tr>
+      ${p.num_floors?`<tr><td class="k">Floors (recorded)</td><td class="v"><span class="num">${p.num_floors}</span></td></tr>`:''}
+      ${p.height?`<tr><td class="k">Height (recorded)</td><td class="v"><span class="num">${p.height}</span> m</td></tr>`:''}
+    </table></div>
+
+    <div class="grp"><h2>Location &amp; provenance</h2><table>
+      <tr><td class="k">Longitude</td><td class="v"><span class="num">${c[0].toFixed(6)}</span></td></tr>
+      <tr><td class="k">Latitude</td><td class="v"><span class="num">${c[1].toFixed(6)}</span></td></tr>
+      ${p.class?`<tr><td class="k">Class</td><td class="v">${p.class}</td></tr>`:''}
+      ${upd?`<tr><td class="k">Source updated</td><td class="v"><span class="num">${upd}</span></td></tr>`:''}
+      ${lic?`<tr><td class="k">Licence</td><td class="v">${lic}</td></tr>`:''}
+    </table></div>
+  `;
+
+  const [h23,h20] = await Promise.all([heightAt(c[0],c[1],'2023q4'), heightAt(c[0],c[1],'2020q4')]);
+  const cell=(r,v,why)=>{
+    const el=document.getElementById(r); if(!el) return;
+    el.children[1].innerHTML = v==null
+      ? `<span class="na">not available</span><span class="why">${why}</span>`
+      : `${v.height.toFixed(1)} m <span class="est">est</span>
+         <span class="why">~76 m grid · ${v.gated
+             ? `median of ${v.n} built-up cells`
+             : `<span style="color:var(--warn)">only sparse cells (${v.n}) — unreliable</span>`}
+           · local built fraction ${(v.density*100).toFixed(0)}%<br>
+           Describes the block, not this roof. Against finer data over a test city
+           this source read about 2 m low.</span>`;
+  };
+  cell('hrow',h23,'no height raster covers this point');
+  cell('hrow0',h20,'no height raster covers this point');
+  (async ()=>{
+    const all = map.queryRenderedFeatures({layers:BLD_LAYERS.filter(l=>map.getLayer(l))})
+                   .filter(notDup);
+    const ps = await popShare(f, all);
+    if(!ps) return;
+    const tbl = document.getElementById('tbl'); if(!tbl) return;
+    const pct = (ps.share*100).toFixed(4);
+    tbl.insertAdjacentHTML('beforeend', areaPop
+      ? `<tr><td class="k">People (allocated)</td><td class="v">${Math.round(areaPop*ps.share)}
+         <span class="est">est</span><span class="why">${pct}% of the ${areaPop.toLocaleString()}
+         you entered, shared by building volume — an allocation, not a headcount</span></td></tr>`
+      : `<tr><td class="k">Share of area population</td><td class="v">${pct}%
+         <span class="est">est</span><span class="why">by building volume. Enter a population
+         for this area above to turn this into people.</span></td></tr>`);
+  })();
+  const fl = document.getElementById('flr');
+  if(fl){
+    const hh = (h23||h20);
+    fl.children[1].innerHTML = hh
+      ? `${Math.max(1,Math.round(hh.height/3))} <span class="est">est</span>
+         <span class="why">height ÷ 3.0 m per storey — an estimate of an estimate</span>`
+      : `<span class="na">not available</span><span class="why">needs a height value</span>`;
+  }
+  if(h23&&h20){
+    const d=Math.abs(h23.height-h20.height);
+    document.getElementById('tbl').insertAdjacentHTML('afterend',
+      `<div class="note note-info"><strong>Change 2020→2023:</strong> ${(h23.height-h20.height>=0?'+':'')}${(h23.height-h20.height).toFixed(1)} m
+       ${d<2?' — within noise for this grid':''}</div>`);
+  }
+  document.getElementById('tbl').insertAdjacentHTML('afterend',
+    `<div class="note note-warn"><strong>Precision.</strong> Outlines are tile-simplified
+     and height comes from a ~76 m grid, so both describe this building's block more than
+     the building itself. Independent height sources for one test area differed by up to
+     4.7 m — about 1.5 storeys.</div>`);
+}
+const BLD_LAYERS = ['bld-fill','ovt-fill'];
+for(const L of BLD_LAYERS){
+  map.on('click', L, onBuildingClick);
+  map.on('mouseenter', L, ()=>{ map.getCanvas().style.cursor='pointer'; });
+  map.on('mouseleave', L, ()=>{ map.getCanvas().style.cursor=''; clearHover(); });
+  // hover highlight: filter the paired *-hover layer to the feature under the cursor
+  map.on('mousemove', L, e=>{
+    const f = (e.features || []).filter(notDup)[0];
+    if(!f) return;
+    const tgt = L === 'bld-fill' ? 'bld-hover' : 'ovt-hover';
+    const other = L === 'bld-fill' ? 'ovt-hover' : 'bld-hover';
+    const key = f.id !== undefined ? ['==',['id'], f.id]
+                                   : ['==',['get','id'], f.properties.id || ''];
+    map.setFilter(tgt, key);
+    map.setFilter(other, ['==',['id'],'']);
+  });
+}
+function clearHover(){
+  for(const h of ['bld-hover','ovt-hover'])
+    if(map.getLayer(h)) map.setFilter(h, ['==',['id'],'']);
+}
+
+/* ---------- place search ----------
+   Shows several matches with their type and region rather than silently taking the
+   first hit, and flies to a zoom where buildings are actually visible. */
+const placeInput = document.getElementById('place');
+const sugg = document.createElement('div');
+sugg.id = 'sugg';
+placeInput.parentElement.appendChild(sugg);
+
+let searchTimer = null;
+async function runSearch(q){
+  if(!q || q.length < 2){ sugg.style.display='none'; return; }
+  sugg.innerHTML = '<div class="s-item s-dim">Searching…</div>';
+  sugg.style.display = 'block';
+  try{
+    const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=6&addressdetails=1&q='
+                          + encodeURIComponent(q));
+    const j = await r.json();
+    if(!j.length){ sugg.innerHTML = '<div class="s-item s-dim">No match</div>'; return; }
+    sugg.innerHTML = j.map((h,i)=>{
+      const parts = h.display_name.split(',');
+      const head = parts[0].trim();
+      const tail = parts.slice(1,3).join(',').trim();
+      const kind = (h.type||h.class||'').replace(/_/g,' ');
+      return `<div class="s-item" data-i="${i}">
+        <span class="s-name">${head}</span>
+        <span class="s-kind">${kind}</span>
+        <span class="s-where">${tail}</span></div>`;
+    }).join('');
+    [...sugg.querySelectorAll('.s-item')].forEach(el=>{
+      el.onclick = ()=>{
+        const h = j[+el.dataset.i];
+        const b = h.boundingbox.map(Number);
+        const spanKm = (b[1]-b[0])*110.54;
+        // Small places: fly close. Large regions: fit, but never below the zoom
+        // where buildings render.
+        if(spanKm < 3) map.flyTo({center:[+h.lon,+h.lat], zoom:16, duration:900});
+        else map.fitBounds([[b[2],b[0]],[b[3],b[1]]],
+                           {maxZoom:16, minZoom:13, padding:30, duration:900});
+        sugg.style.display='none';
+        placeInput.value = h.display_name.split(',')[0];
+        placeInput.blur();
+      };
+    });
+  }catch(err){ sugg.innerHTML = '<div class="s-item s-dim">Search unavailable</div>'; }
+}
+on('place','input', e=>{
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  searchTimer = setTimeout(()=>runSearch(q), 350);
+});
+on('place','keydown', e=>{
+  if(e.key === 'Enter'){ clearTimeout(searchTimer); runSearch(e.target.value.trim()); }
+  if(e.key === 'Escape'){ sugg.style.display='none'; }
+});
+document.addEventListener('click', e=>{
+  if(!placeInput.parentElement.contains(e.target)) sugg.style.display='none';
+});
+
+/* keyboard: "/" focuses search, Escape cancels a selection in progress */
+document.addEventListener('keydown', e=>{
+  if(e.key === '/' && document.activeElement.tagName !== 'INPUT'){
+    e.preventDefault(); document.getElementById('place').focus();
+  }
+  if(e.key === 'Escape') document.activeElement.blur();
+});
+
+on('about','click', e=>{
+  e.preventDefault();
+  document.getElementById('body').innerHTML = `
+    <div class="grp"><h2>What this shows</h2><table>
+      <tr><td class="k">Buildings</td><td class="v">Google Open Buildings + Microsoft
+        Global ML Footprints, combined by VIDA (CC BY-4.0 / ODbL)
+        <span class="why">the full union of both products, 2.7 billion footprints,
+        streamed as vector tiles — nothing is stored in this file. Measured over one
+        dense test area it carries 1,071 buildings where a conflated alternative
+        carried 342.</span></td></tr>
+      <tr><td class="k">Road names</td><td class="v">Overture Maps</td></tr>
+      <tr><td class="k">Height</td><td class="v">Microsoft (CDLA-2.0)
+        <span class="why">~76 m grid, 2020 Q4 and 2023 Q4, read live from cloud-optimised
+        rasters</span></td></tr>
+      <tr><td class="k">Imagery</td><td class="v">Esri World Imagery
+        <span class="why">13 captures, 2014–2026, under its terms of service</span></td></tr>
+      <tr><td class="k">Place search</td><td class="v">Nominatim / OpenStreetMap</td></tr>
+    </table></div>
+    <div class="note note-warn"><strong>Attribution is required</strong> by these licences.
+    Keep this panel in any redistributed copy.</div>
+    <div class="note note-info"><strong>What is measured vs estimated.</strong> Footprint
+    geometry is measured from the tiles. Height, floors and population are estimated and
+    labelled as such. Population is an allocation of a total you supply — never a headcount.</div>`;
+});
+
+map.on('load', refresh);
+// applyTheme runs once before the style exists, so on a light-mode machine the label
+// colours were never re-applied. Run it again once there are layers to colour.
+map.on('load', applyTheme);
+</script>
+</body>
+</html>
