@@ -81,7 +81,8 @@ warns you when the two drift apart.
 | Place search | Nominatim / OpenStreetMap | ODbL |
 
 The in-app **(i)** control and the "Data & licences" panel carry the same credits.
-Keep both in any copy you publish or redistribute.
+Keep both in any copy you publish or redistribute. Full detail, with links and the
+software licences, is in **[ATTRIBUTION.md](ATTRIBUTION.md)**.
 
 **Requires an internet connection.** Nothing is bundled — every layer streams from its
 publisher at the moment you look at it. That is what keeps the file at 69 KB while
@@ -136,3 +137,17 @@ GitHub Pages rebuilds within a minute or two.
 
 It is one static file. Any web server works — drop `index.html` anywhere and open it.
 There is nothing to configure and nothing to keep running.
+
+---
+
+## Licence
+
+The viewer code is **MIT** — see [LICENSE](LICENSE). The map data it displays is not
+covered by that grant; each layer keeps its own licence, listed in
+[ATTRIBUTION.md](ATTRIBUTION.md).
+
+## Citing this
+
+A [CITATION.cff](CITATION.cff) is included, so GitHub's "Cite this repository" button
+produces a formatted reference. If you use the explorer or its outputs in published
+work, please cite it.

@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Global Building Explorer"
+abstract: >-
+  A single-file web application that streams building footprints, heights and
+  historical satellite imagery for anywhere on Earth. Each building can be queried for
+  its measured footprint geometry, its exact count of physically touching neighbours,
+  and estimated height, storeys and population share. Built as the delivered product
+  of a study on segmenting individual buildings in dense informal settlements.
+type: software
+authors:
+  - family-names: Ezz
+    given-names: Ali
+    email: ali.ezz617@gmail.com
+    affiliation: >-
+      National Authority for Remote Sensing and Space Sciences (NARSS), Egypt
+version: "1.0.0"
+date-released: "2026-07-27"
+license: MIT
+repository-code: "https://github.com/ali-ezz/building-explorer"
+url: "https://ali-ezz.github.io/building-explorer/"
+keywords:
+  - remote sensing
+  - building footprints
+  - instance segmentation
+  - informal settlements
+  - urban analytics
+  - satellite imagery
+  - web mapping
+  - Egypt
