@@ -2,7 +2,7 @@
 
 Every building on Earth, streamed — no server, no database, one HTML file.
 
-**Live:** https://ali-ezz.github.io/imbaba-explorer/
+**Live:** https://ali-ezz.github.io/building-explorer/
 
 Click any building to read its footprint, touching neighbours, height, estimated
 floors and share of population. Move the imagery slider to see the same place in any
@@ -28,4 +28,13 @@ publish or redistribute.
 
 ## Deploying an update
 
-This directory is a subtree of the project repository; it is not edited here.
+This directory is a subtree of the private project repository `ali-ezz/imbaba-buildings`
+and is not edited here. To publish an update:
+
+```bash
+python3 scripts/build_global_app.py data/deliverable/global_app.html
+cp data/deliverable/global_app.html site/index.html
+git add site && git commit -m "site: update"
+git push origin main
+git subtree push --prefix site explorer main
+```
