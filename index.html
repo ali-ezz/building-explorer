@@ -1011,7 +1011,7 @@ function refresh(){
   const el=document.getElementById('status');
   if(map.getZoom()<12){
     el.innerHTML='Zoomed out too far for buildings — '
-      + '<a href="#" id="zin" style="color:var(--a1)">zoom in</a>'
+      + '<a href="#" id="zin" style="color:var(--accent)">zoom in</a>'
       + ' <span style="color:var(--faint)">(needs level 12+)</span>';
     const a=document.getElementById('zin');
     if(a) a.onclick=(ev)=>{ev.preventDefault(); map.easeTo({zoom:15,duration:600});};
@@ -1034,7 +1034,7 @@ function refresh(){
     + (med!=null? `<br>median footprint <b>${med.toFixed(0)} m²</b>`:'')
     + (dens!=null? ` · <b>${dens.toFixed(0)}</b> per km²`:'')
     + vintageNote()
-    + (f.length? ` · <a href="#" id="dl" style="color:var(--a1)">export</a>`:'');
+    + (f.length? ` · <a href="#" id="dl" style="color:var(--accent)">export</a>`:'');
   const a=document.getElementById('dl');
   if(a) a.onclick=(ev)=>{ ev.preventDefault(); exportVisible(f); };
 }
@@ -1167,10 +1167,10 @@ async function onBuildingClick(e){
     const el=document.getElementById(r); if(!el) return;
     el.children[1].innerHTML = v==null
       ? `<span class="na">not available</span><span class="why">${why}</span>`
-      : `${v.height.toFixed(1)} m <span class="est">est</span>
+      : `${v.height.toFixed(1)} m <span class="tag t-est">est</span>
          <span class="why">~76 m grid · ${v.gated
              ? `median of ${v.n} built-up cells`
-             : `<span style="color:var(--warn)">only sparse cells (${v.n}) — unreliable</span>`}
+             : `<span style="color:var(--estimated)">only sparse cells (${v.n}) — unreliable</span>`}
            · local built fraction ${(v.density*100).toFixed(0)}%<br>
            Describes the block, not this roof. Against finer data over a test city
            this source read about 2 m low.</span>`;
@@ -1186,17 +1186,17 @@ async function onBuildingClick(e){
     const pct = (ps.share*100).toFixed(4);
     tbl.insertAdjacentHTML('beforeend', areaPop
       ? `<tr><td class="k">People (allocated)</td><td class="v">${Math.round(areaPop*ps.share)}
-         <span class="est">est</span><span class="why">${pct}% of the ${areaPop.toLocaleString()}
+         <span class="tag t-est">est</span><span class="why">${pct}% of the ${areaPop.toLocaleString()}
          you entered, shared by building volume — an allocation, not a headcount</span></td></tr>`
       : `<tr><td class="k">Share of area population</td><td class="v">${pct}%
-         <span class="est">est</span><span class="why">by building volume. Enter a population
+         <span class="tag t-est">est</span><span class="why">by building volume. Enter a population
          for this area above to turn this into people.</span></td></tr>`);
   })();
   const fl = document.getElementById('flr');
   if(fl){
     const hh = (h23||h20);
     fl.children[1].innerHTML = hh
-      ? `${Math.max(1,Math.round(hh.height/3))} <span class="est">est</span>
+      ? `${Math.max(1,Math.round(hh.height/3))} <span class="tag t-est">est</span>
          <span class="why">height ÷ 3.0 m per storey — an estimate of an estimate</span>`
       : `<span class="na">not available</span><span class="why">needs a height value</span>`;
   }
