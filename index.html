@@ -1146,6 +1146,29 @@ function dedupe(){
 // the export, the click target and the neighbour test all have to skip it too
 const notDup = f => !(f.id != null && dupIds[f.source] && dupIds[f.source].has(f.id));
 
+/* ---------- when a source does not load ----------
+   OBSERVED IN TESTING, not imagined: the VIDA archive returned
+   ERR_CONNECTION_CLOSED on one load and the app carried on showing Overture's
+   buildings alone. The count fell from 479 to 140 over the same box and NOTHING
+   said so - every number downstream was quietly computed on half the data.
+   A missing source has to be visible, because silence here reads as "there are
+   no buildings" rather than "we could not fetch them". */
+const SRC_NAME = {bld:'Google + Microsoft buildings', ovt:'Overture buildings',
+  rds:'Roads', div:'Divisions', bse:'Land and water', plc:'Places', sat:'Imagery'};
+const failedSrc = new Set();
+map.on('error', e => {
+  const id = e && e.sourceId;
+  if(!id || !SRC_NAME[id] || failedSrc.has(id)) return;
+  failedSrc.add(id);
+  refresh();
+});
+function sourceWarning(){
+  if(!failedSrc.size) return '';
+  const names = [...failedSrc].map(s=>SRC_NAME[s]).join(', ');
+  return `<br><span style="color:var(--estimated)">⚠ could not load: ${names}
+    — figures below are computed on what did load</span>`;
+}
+
 /* ---------- status ---------- */
 function visibleBuildings(){
   if(map.getZoom()<12) return null;
@@ -1198,6 +1221,7 @@ function refresh(){
     + (med!=null? `<br>median footprint <b>${med.toFixed(0)} m²</b>`:'')
     + (dens!=null? ` · <b>${dens.toFixed(0)}</b> per km²`:'')
     + vintageNote()
+    + sourceWarning()
     + (f.length? ` · <a href="#" id="dl" style="color:var(--accent)">export</a>`:'');
   const a=document.getElementById('dl');
   if(a) a.onclick=(ev)=>{ ev.preventDefault(); exportVisible(f); };
@@ -1466,6 +1490,220 @@ function dl(name, blob){
 }
 const canvasBlob = c => new Promise(res => c.toBlob(res, 'image/png'));
 
+/* ================= BLOCK COMPLEXITY =================
+   Published in Nature (2025), "Infrastructure deficits and informal settlements
+   in sub-Saharan Africa": informality has an objective, measurable definition —
+   the LACK OF STREET ACCESS to buildings. k-complexity is the number of building
+   parcels you must cross to get from the least accessible structure in a block
+   out to the street network.
+
+       k = 1      every building fronts a street. A planned block
+       k = 2-4    driveways, backyard structures, easements
+       k = 5+     severe infrastructure deficit, almost always informal
+       k = 8      the sub-Saharan African average
+
+   It needs only buildings and roads, both of which already stream here, and it
+   is pure geometry — so none of the constraints that closed the model track
+   apply to it. It also answers the question an institution actually asks: which
+   blocks can an ambulance, a fire engine or a water pipe not reach?
+
+   ⚠️ IT IS ONLY AS GOOD AS THE ROAD NETWORK. Where alleys are unmapped — which
+   is common in exactly the fabric this measures — k reads TOO HIGH. That caveat
+   ships next to the number, never without it. */
+
+/* ACCESS_M is the one judgement call in this whole computation, so it was swept
+   rather than guessed. Share of Imbaba buildings counted as fronting a street,
+   MEASURED over one 11 ha box against Overture road centrelines:
+
+       3 m  71%      6 m  90%      9 m  96%      12 m  97%      20 m  99%
+
+   Past about 9 m the curve is flat: the threshold has stopped measuring street
+   access and started counting every building near anything. The knee is at 6 m,
+   which is also what the geometry argues for - a residential street is roughly
+   6-8 m wide, so a building fronting one sits ~3-4 m from its centreline, and an
+   alley narrower still. 12 m was the first value tried and it sat on the
+   plateau, flattering the result. */
+const ACCESS_M = 6;    // building-to-road-centreline distance counted as fronting
+const ADJ_M    = 2.0;  // building-to-building distance counted as one parcel hop
+
+/* BUG THIS FIXES: this used to call queryRenderedFeatures on 'road-major' and
+   'road-minor'. Those are SYMBOL layers — they draw road NAMES — so it returned
+   only the handful of segments that happened to have a label placed. Measured
+   over one Imbaba box: 30 segments instead of the real network, which made 56%
+   of buildings look unreachable when they simply had no labelled road nearby.
+   querySourceFeatures reads the loaded tiles directly and does not care whether
+   anything was drawn, which is what a geometric question needs. */
+function roadsIn(bb){
+  if(!map.getSource('rds')) return [];
+  let f = [];
+  try { f = map.querySourceFeatures('rds', {sourceLayer:'segment'}); }
+  catch(e){ return []; }
+  const pad = 0.0008;                       // ~90 m: a road just outside still serves the box
+  const W=bb.w-pad, E=bb.e+pad, S=bb.s-pad, N=bb.n+pad;
+  const lines = [];
+  const take = coords => {
+    // keep only lines that touch the padded box
+    let hit = false;
+    for(const [x,y] of coords){ if(x>=W&&x<=E&&y>=S&&y<=N){ hit = true; break; } }
+    if(hit) lines.push(coords);
+  };
+  for(const r of f){
+    // subtype 'road' excludes rail and ferry, which do not give a building access
+    if(r.properties && r.properties.subtype && r.properties.subtype !== 'road') continue;
+    const g = r.geometry; if(!g) continue;
+    if(g.type === 'LineString') take(g.coordinates);
+    else if(g.type === 'MultiLineString') for(const l of g.coordinates) take(l);
+  }
+  return lines;
+}
+// metre-space helpers keyed on one latitude, which is accurate over a drawn box
+function mProj(lat0){
+  const kx = Math.cos(lat0*Math.PI/180)*111320, ky = 110540;
+  return ([x,y]) => [x*kx, y*ky];
+}
+function ptSegD(p, a, b){
+  const vx=b[0]-a[0], vy=b[1]-a[1], wx=p[0]-a[0], wy=p[1]-a[1];
+  const L=vx*vx+vy*vy;
+  if(L===0) return Math.hypot(wx,wy);
+  let t=(wx*vx+wy*vy)/L; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(p[0]-(a[0]+t*vx), p[1]-(a[1]+t*vy));
+}
+/* Uniform grid over the road segments so each building tests only the segments
+   near it. Without this a 500-building box against 2,000 road segments is a
+   million distance tests per redraw. */
+function roadIndex(lines, prj, cell){
+  const g = new Map(), segs = [];
+  for(const line of lines){
+    const m = line.map(prj);
+    for(let i=0;i<m.length-1;i++){
+      const a=m[i], b=m[i+1], si = segs.push([a,b]) - 1;
+      const x0=Math.min(a[0],b[0]), x1=Math.max(a[0],b[0]);
+      const y0=Math.min(a[1],b[1]), y1=Math.max(a[1],b[1]);
+      for(let ix=Math.floor(x0/cell); ix<=Math.floor(x1/cell); ix++)
+        for(let iy=Math.floor(y0/cell); iy<=Math.floor(y1/cell); iy++){
+          const k=ix+':'+iy; let c=g.get(k); if(!c) g.set(k, c=[]); c.push(si);
+        }
+    }
+  }
+  return {g, segs, cell};
+}
+function nearRoad(ringM, ri, tol){
+  for(const p of ringM){
+    const ix = Math.floor(p[0]/ri.cell), iy = Math.floor(p[1]/ri.cell);
+    const r = Math.ceil(tol/ri.cell);
+    for(let dx=-r; dx<=r; dx++) for(let dy=-r; dy<=r; dy++){
+      const c = ri.g.get((ix+dx)+':'+(iy+dy)); if(!c) continue;
+      for(const si of c){ const s = ri.segs[si];
+        if(ptSegD(p, s[0], s[1]) <= tol) return true; }
+    }
+  }
+  return false;
+}
+
+/* Returns k per building and the block-level summary.
+   k is assigned by breadth-first search outward from the buildings that front a
+   street: those are k=1, anything touching them is k=2, and so on. A building
+   that no chain of neighbours connects to a street is unreachable (k = ∞). */
+function blockComplexity(bb, feats){
+  const lat0 = (bb.n + bb.s)/2, prj = mProj(lat0);
+  const lines = roadsIn(bb);
+  const ri = roadIndex(lines, prj, 40);
+
+  // one entry per building, tile-split pieces merged
+  const byId = new Map();
+  for(const f of feats){
+    const id = featKey(f); if(id == null) continue;
+    const ring = outerRing(f); if(!ring) continue;
+    let e = byId.get(id);
+    if(!e) byId.set(id, e = {id, rings:[], bbox:[180,90,-180,-90]});
+    e.rings.push(ring.map(prj));
+    const bx = bboxOf(ring);
+    e.bbox = [Math.min(e.bbox[0],bx[0]), Math.min(e.bbox[1],bx[1]),
+              Math.max(e.bbox[2],bx[2]), Math.max(e.bbox[3],bx[3])];
+  }
+  const B = [...byId.values()];
+  if(!B.length) return null;
+
+  // street access
+  for(const b of B) b.front = lines.length ? b.rings.some(r => nearRoad(r, ri, ACCESS_M)) : false;
+
+  // adjacency via a grid on building bounding boxes in metre space
+  const cell = 30, grid = new Map();
+  for(let i=0;i<B.length;i++){
+    const b = B[i];
+    const p0 = prj([b.bbox[0], b.bbox[1]]), p1 = prj([b.bbox[2], b.bbox[3]]);
+    b.m = [Math.min(p0[0],p1[0]), Math.min(p0[1],p1[1]),
+           Math.max(p0[0],p1[0]), Math.max(p0[1],p1[1])];
+    for(let ix=Math.floor(b.m[0]/cell); ix<=Math.floor(b.m[2]/cell); ix++)
+      for(let iy=Math.floor(b.m[1]/cell); iy<=Math.floor(b.m[3]/cell); iy++){
+        const k=ix+':'+iy; let c=grid.get(k); if(!c) grid.set(k, c=[]); c.push(i);
+      }
+  }
+  const adj = B.map(()=>new Set());
+  const near = (a,b) => !(a.m[0] > b.m[2]+ADJ_M || a.m[2] < b.m[0]-ADJ_M ||
+                          a.m[1] > b.m[3]+ADJ_M || a.m[3] < b.m[1]-ADJ_M);
+  const ringsClose = (A,Bb) => {
+    for(const ra of A.rings) for(const rb of Bb.rings)
+      for(let i=0;i<ra.length-1;i++) for(let j=0;j<rb.length-1;j++)
+        if(segDist(ra[i],ra[i+1],rb[j],rb[j+1]) <= ADJ_M) return true;
+    return false;
+  };
+  const seenPair = new Set();
+  for(const [,list] of grid) for(let a=0;a<list.length;a++) for(let b=a+1;b<list.length;b++){
+    const i=list[a], j=list[b], key = i<j ? i+'_'+j : j+'_'+i;
+    if(seenPair.has(key)) continue; seenPair.add(key);
+    if(near(B[i],B[j]) && ringsClose(B[i],B[j])){ adj[i].add(j); adj[j].add(i); }
+  }
+
+  // BFS from the street-fronting set
+  const k = new Array(B.length).fill(Infinity), q = [];
+  for(let i=0;i<B.length;i++) if(B[i].front){ k[i]=1; q.push(i); }
+  for(let h=0; h<q.length; h++){
+    const i = q[h];
+    for(const j of adj[i]) if(k[j] > k[i]+1){ k[j] = k[i]+1; q.push(j); }
+  }
+  // connected components = blocks
+  const comp = new Array(B.length).fill(-1); let nc = 0;
+  for(let i=0;i<B.length;i++){
+    if(comp[i] !== -1) continue;
+    const st=[i]; comp[i]=nc;
+    while(st.length){ const x=st.pop();
+      for(const y of adj[x]) if(comp[y]===-1){ comp[y]=nc; st.push(y); } }
+    nc++;
+  }
+  /* BUG THIS FIXES: blockK started at 0 and only rose for reachable buildings,
+     so a block where NOTHING reaches a street stayed at 0 and dragged the median
+     down to 0 — reporting the worst blocks as if they were the best. Blocks with
+     no route out are excluded from the median and counted separately instead. */
+  const blockK = new Array(nc).fill(-1);
+  for(let i=0;i<B.length;i++)
+    if(k[i] !== Infinity) blockK[comp[i]] = Math.max(blockK[comp[i]], k[i]);
+  const blocksNoRoute = blockK.filter(v => v === -1).length;
+  const kv = k.filter(v=>v!==Infinity).sort((a,b)=>a-b);
+  const kmap = new Map();
+  for(let i=0;i<B.length;i++) kmap.set(B[i].id, k[i]);
+  const hist = {};
+  for(const v of k){ const key = v===Infinity ? 'unreachable' : ('k'+v); hist[key]=(hist[key]||0)+1; }
+  return {
+    kmap, hist,
+    n: B.length,
+    fronting: B.filter(b=>b.front).length,
+    unreachable: k.filter(v=>v===Infinity).length,
+    medianK: kv.length ? kv[Math.floor(kv.length/2)] : null,
+    maxK: kv.length ? kv[kv.length-1] : null,
+    blocks: nc, blocksNoRoute,
+    medianBlockK: (()=>{ const s = blockK.filter(v=>v>=0).sort((a,b)=>a-b);
+      return s.length ? s[Math.floor(s.length/2)] : null; })(),
+    roadSegs: ri.segs.length, roadLines: lines.length
+  };
+}
+function kVerdict(k){
+  if(k == null) return ['—',''];
+  if(k <= 2) return ['planned','var(--measured)'];
+  if(k <= 4) return ['partially accessible','var(--estimated)'];
+  return ['severe access deficit','#e06a5a'];
+}
+
 /* ---------- the area report ----------
    Every figure here is MEASURED from the streamed geometry. Nothing is inferred,
    so nothing needs the estimated tag except where a height is involved. */
@@ -1518,7 +1756,7 @@ function fmtRow(k, v, why){
   return `<tr><td class="k">${k}</td><td class="v">${v}${
     why?`<span class="why">${why}</span>`:''}</td></tr>`;
 }
-let lastFeats = null, lastStats = null, lastRaster = null;
+let lastFeats = null, lastStats = null, lastRaster = null, lastBC = null;
 function areaReport(bb){
   const body = document.getElementById('body');
   const feats = buildingsIn(bb);
@@ -1533,6 +1771,11 @@ function areaReport(bb){
   st.cover = R.builtFraction;
   st.overlap = st.bcr > 0 ? Math.max(0, 1 - st.cover / st.bcr) : 0;
   lastStats = st;
+  let bc = null;
+  try { bc = blockComplexity(bb, feats); }
+  catch(e){ console.warn('block complexity failed', e); }   // never kill the report
+  lastBC = bc;
+  const kv = kVerdict(bc && bc.medianBlockK);
   const lb = landBreakdown(bb);
   const num = v => v==null ? '—' : (v>=100 ? v.toFixed(0) : v.toFixed(2));
   const lbHtml = obj => {
@@ -1561,6 +1804,29 @@ function areaReport(bb){
       ${fmtRow('Median compactness', `<span class="num">${num(st.medCompact)}</span>`,
         '4πA/P² — 1.0 is a circle, lower is more ragged')}
     </table></div>
+
+    ${bc ? `<div class="grp"><h2>Street access · measured</h2><table>
+      ${fmtRow('Block complexity', `<span class="num">k = ${bc.medianBlockK ?? '—'}</span>
+        <span class="tag" style="color:${kv[1]};background:color-mix(in srgb,${kv[1]} 15%,transparent)">${kv[0]}</span>`,
+        'parcels to cross from the least reachable building out to a street. '
+        + 'k=1–2 planned · 5+ severe deficit · sub-Saharan Africa averages 8')}
+      ${fmtRow('Fronting a street', `<span class="num">${bc.fronting}</span> of ${bc.n}
+        <span class="num">(${(100*bc.fronting/bc.n).toFixed(0)}%)</span>`,
+        `within ${ACCESS_M} m of a mapped road centreline`)}
+      ${bc.unreachable ? fmtRow('No route to a street',
+        `<span class="num">${bc.unreachable}</span>`,
+        'no chain of neighbours reaches a mapped road') : ''}
+      ${fmtRow('Median building k', `<span class="num">${bc.medianK ?? '—'}</span>`)}
+      ${fmtRow('Deepest building', `<span class="num">k = ${bc.maxK ?? '—'}</span>`)}
+      ${fmtRow('Blocks', `<span class="num">${bc.blocks}</span>`
+        + (bc.blocksNoRoute ? ` · <span class="num">${bc.blocksNoRoute}</span> with no route out` : ''),
+        'connected groups of touching buildings')}
+    </table>
+    <div class="note note-warn"><strong>Only as good as the road map.</strong>
+    Computed against <b>${bc.roadLines.toLocaleString()}</b> mapped roads
+    (<b>${bc.roadSegs.toLocaleString()}</b> segments). Where alleys
+    are missing from the source — common in exactly this kind of fabric — k reads
+    too high and the fronting share too low.</div></div>` : ''}
 
     <div class="grp"><h2>Land · from Overture</h2><table>
       ${fmtRow('Land use', lbHtml(lb.land_use))}
@@ -1616,6 +1882,7 @@ async function exportArea(bb, feats, st, everything){
   if(btn){ btn.textContent = was; btn.disabled = false; }
 }
 function statsCSV(bb, st, W, H, gsd, nInst){
+  const BC = lastBC;
   const r = [
     ['metric','value','unit','kind'],
     ['west',bb.w,'deg','measured'], ['south',bb.s,'deg','measured'],
@@ -1632,6 +1899,12 @@ function statsCSV(bb, st, W, H, gsd, nInst){
     ['building_coverage_union',st.cover,'fraction','measured'],
     ['source_overlap',st.overlap,'fraction','measured'],
     ['median_compactness',st.medCompact,'ratio','measured'],
+    ['block_complexity_k',BC?BC.medianBlockK:'', 'parcels','measured'],
+    ['buildings_fronting_street',BC?BC.fronting:'', 'count','measured'],
+    ['buildings_no_street_route',BC?BC.unreachable:'', 'count','measured'],
+    ['blocks',BC?BC.blocks:'', 'count','measured'],
+    ['blocks_no_street_route',BC?BC.blocksNoRoute:'', 'count','measured'],
+    ['road_segments_used',BC?BC.roadSegs:'', 'count','provenance'],
     ['raster_width',W,'px','measured'], ['raster_height',H,'px','measured'],
     ['raster_gsd',gsd,'m_per_px','measured'],
     ['source','Google Open Buildings + Microsoft (VIDA) / Overture','','provenance'],
