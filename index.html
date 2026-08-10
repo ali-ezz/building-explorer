@@ -218,6 +218,9 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       </div>
       <div class="capnote" id="capnote"></div>
       <div class="row">
+        <button id="area">Select area</button>
+      </div>
+      <div class="row">
         <button id="theme">Dark</button>
         <button id="labels">Labels</button>
       </div>
@@ -591,6 +594,10 @@ const map = new maplibregl.Map({
        paint:{'fill-color':'#ffd166','fill-opacity':0.45}},
       {id:'sel-line', type:'line', source:'selsrc',
        paint:{'line-color':'#ffd166','line-width':2.8}},
+      {id:'box-fill', type:'fill', source:'boxsrc',
+       paint:{'fill-color':'#4d9fe8','fill-opacity':0.10}},
+      {id:'box-line', type:'line', source:'boxsrc',
+       paint:{'line-color':'#4d9fe8','line-width':1.8,'line-dasharray':[3,2]}},
       /* ---------- LABELS ----------
          Three things carry a name on this map and nothing else: countries,
          governorates, and streets. Everything a general-purpose basemap adds on top
@@ -860,6 +867,9 @@ function applyTheme(){
 }
 on('theme','click',()=>{ dark=!dark; applyTheme(); });
 applyTheme();
+on('area','click',()=>setDrawMode(!drawing));
+// Escape leaves draw mode - a mode you cannot get out of is a trap
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && drawing) setDrawMode(false); });
 
 /* ---------- layer stack ----------
    ONE config drives the checkboxes, the visibility calls and the credit line.
@@ -1234,8 +1244,405 @@ async function popShare(f, all){
   return total > 0 ? {share: mine/total, floors} : null;
 }
 
+/* ================= AREA SELECTION AND EXPORT =================
+   The deliverable this whole project was asked for is a two-colour mask over a
+   chosen area. It is produced here from the STREAMED FOOTPRINTS, with no model
+   and no server, because F57 measured the public data separating buildings 3.4%
+   merged against our own model's 15-21% - the data is simply better at this than
+   anything we trained, so the data is what ships.
+
+   Everything below runs client-side. Nothing is uploaded anywhere. */
+
+let boxA = null, boxB = null, drawing = false, lastBox = null;
+function boxGeo(a, b){
+  if(!a || !b) return {type:'FeatureCollection', features:[]};
+  const w = Math.min(a.lng,b.lng), e = Math.max(a.lng,b.lng);
+  const s = Math.min(a.lat,b.lat), n = Math.max(a.lat,b.lat);
+  return {type:'FeatureCollection', features:[{type:'Feature', properties:{},
+    geometry:{type:'Polygon', coordinates:[[[w,s],[e,s],[e,n],[w,n],[w,s]]]}}]};
+}
+function drawBox(){ const src = map.getSource('boxsrc');
+  if(src) src.setData(boxGeo(boxA, boxB)); }
+function boxBounds(){
+  if(!boxA || !boxB) return null;
+  return {w:Math.min(boxA.lng,boxB.lng), e:Math.max(boxA.lng,boxB.lng),
+          s:Math.min(boxA.lat,boxB.lat), n:Math.max(boxA.lat,boxB.lat)};
+}
+function setDrawMode(on){
+  drawing = on;
+  const b = document.getElementById('area');
+  if(b){ b.classList.toggle('on', on); b.textContent = on ? 'Cancel' : 'Select area'; }
+  map.getCanvas().style.cursor = on ? 'crosshair' : '';
+  // dragPan must go OFF or the map pans instead of drawing
+  if(on) map.dragPan.disable(); else map.dragPan.enable();
+  if(!on){ boxA = boxB = null; drawBox(); }
+}
+(function initDraw(){
+  const cv = () => map.getCanvasContainer();
+  let down = false;
+  const pt = e => {
+    const t = (e.touches && e.touches[0]) || e;
+    const r = map.getCanvas().getBoundingClientRect();
+    return map.unproject([t.clientX - r.left, t.clientY - r.top]);
+  };
+  const start = e => {
+    if(!drawing) return;
+    e.preventDefault(); down = true; boxA = pt(e); boxB = boxA; drawBox();
+  };
+  const move = e => { if(!drawing || !down) return; e.preventDefault(); boxB = pt(e); drawBox(); };
+  const end = e => {
+    if(!drawing || !down) return;
+    down = false;
+    const bb = boxBounds();
+    // a click without a drag is not a selection - require a real rectangle
+    if(!bb || Math.abs(bb.e-bb.w) < 1e-6 || Math.abs(bb.n-bb.s) < 1e-6){ return; }
+    lastBox = bb; setDrawMode(false); drawBox2(bb); areaReport(bb);
+  };
+  map.on('load', ()=>{
+    const c = cv();
+    c.addEventListener('mousedown', start);  c.addEventListener('touchstart', start, {passive:false});
+    window.addEventListener('mousemove', move); c.addEventListener('touchmove', move, {passive:false});
+    window.addEventListener('mouseup', end);    c.addEventListener('touchend', end);
+  });
+})();
+function drawBox2(bb){
+  const src = map.getSource('boxsrc');
+  if(src) src.setData({type:'FeatureCollection', features:[{type:'Feature', properties:{},
+    geometry:{type:'Polygon', coordinates:[[[bb.w,bb.s],[bb.e,bb.s],[bb.e,bb.n],[bb.w,bb.n],[bb.w,bb.s]]]}}]});
+}
+
+/* ---------- which buildings fall in the box ---------- */
+function buildingsIn(bb){
+  const sw = map.project([bb.w, bb.s]), ne = map.project([bb.e, bb.n]);
+  const f = map.queryRenderedFeatures(
+    [[Math.min(sw.x,ne.x), Math.min(sw.y,ne.y)], [Math.max(sw.x,ne.x), Math.max(sw.y,ne.y)]],
+    {layers: BLD_LAYERS.filter(l=>map.getLayer(l))}).filter(notDup);
+  const seen = new Set(), out = [];
+  for(const x of f){
+    const id = featKey(x);
+    if(id && seen.has(id)) continue;
+    if(id) seen.add(id);
+    out.push(x);
+  }
+  return out;
+}
+
+/* ---------- rasterise the footprints into a mask ----------
+   Deliberately drawn with the SAME winding rule the source polygons use, and
+   holes are punched with 'evenodd' so a courtyard does not fill in as building.
+   Pixel size is derived from the box so a 500 m box and a 5 km box both come
+   back at a sensible resolution rather than a fixed grid. */
+const MAX_PX = 4096;
+function rasterGrid(bb){
+  const latm = (bb.n + bb.s) / 2;
+  const wm = (bb.e - bb.w) * Math.cos(latm*Math.PI/180) * 111320;
+  const hm = (bb.n - bb.s) * 110540;
+  let gsd = 0.5;                                  // metres per pixel, target
+  let W = Math.round(wm/gsd), H = Math.round(hm/gsd);
+  if(Math.max(W,H) > MAX_PX){ const k = MAX_PX/Math.max(W,H); W = Math.round(W*k); H = Math.round(H*k); }
+  W = Math.max(1, W); H = Math.max(1, H);
+  gsd = wm / W;
+  return {W, H, gsd, wm, hm};
+}
+function ringToPath(ctx, ring, bb, W, H){
+  ctx.beginPath();
+  for(let i=0;i<ring.length;i++){
+    const [lng,lat] = ring[i];
+    const x = (lng - bb.w) / (bb.e - bb.w) * W;
+    const y = (bb.n - lat) / (bb.n - bb.s) * H;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+}
+function eachPolygon(f, fn){
+  const g = f.geometry; if(!g) return;
+  if(g.type === 'Polygon') fn(g.coordinates);
+  else if(g.type === 'MultiPolygon') for(const p of g.coordinates) fn(p);
+}
+// distinct, reproducible colour per instance id
+function instColor(i){
+  const h = (i * 137.508) % 360, s = 62 + (i % 3) * 9, l = 46 + (i % 5) * 6;
+  return `hsl(${h} ${s}% ${l}%)`;
+}
+function renderMasks(bb, feats){
+  const {W, H, gsd} = rasterGrid(bb);
+  const mk = () => { const c = document.createElement('canvas'); c.width=W; c.height=H; return c; };
+  const binC = mk(), instC = mk();
+  const b = binC.getContext('2d'), n = instC.getContext('2d');
+  b.fillStyle = '#000'; b.fillRect(0,0,W,H);
+  n.fillStyle = '#000'; n.fillRect(0,0,W,H);
+  // group tile-split pieces so one building gets ONE colour (F59: 7.6% of
+  // polygons arrive clipped at a tile edge and 4.7% share an id across tiles)
+  const idx = partsIndex(feats);
+  let k = 0; const order = new Map();
+  for(const f of feats){
+    const id = featKey(f);
+    if(id != null && !order.has(id)) order.set(id, ++k);
+    const ci = id != null ? order.get(id) : ++k;
+    b.fillStyle = '#fff';
+    n.fillStyle = instColor(ci);
+    eachPolygon(f, rings => {
+      for(const ctx of [b, n]){
+        ctx.beginPath();
+        for(const ring of rings){
+          for(let i=0;i<ring.length;i++){
+            const [lng,lat] = ring[i];
+            const x = (lng - bb.w) / (bb.e - bb.w) * W;
+            const y = (bb.n - lat) / (bb.n - bb.s) * H;
+            if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+          }
+          ctx.closePath();
+        }
+        ctx.fill('evenodd');     // inner rings punch holes rather than filling
+      }
+    });
+  }
+
+  /* ---- HARDEN THE EDGES ----
+     MEASURED: straight off the canvas the "two-colour" mask had 20,816
+     antialiased grey pixels out of 440k, and the instance mask carried 3,228
+     distinct colours for 476 buildings — Canvas2D antialiases every path fill
+     and there is no flag to turn that off. A mask asked for as TWO COLOURS that
+     ships with a grey fringe is wrong, and blended edge colours would break any
+     downstream "select all pixels of building N".
+
+     So both rasters are thresholded after drawing: the binary snaps to pure
+     0/255, and every instance pixel snaps to the nearest colour actually used,
+     with the binary acting as the stencil so the two rasters agree exactly. */
+  const bd = b.getImageData(0,0,W,H), bp = bd.data;
+  const nd = n.getImageData(0,0,W,H), np_ = nd.data;
+  const pal = [];
+  for(let i=1;i<=k;i++){
+    n.fillStyle = instColor(i); const m = /rgb\((\d+), (\d+), (\d+)\)/.exec(n.fillStyle) ;
+    if(m) pal.push([+m[1],+m[2],+m[3]]);
+    else { // fillStyle may echo back hsl(); resolve it through a 1px scratch canvas
+      const s = document.createElement('canvas'); s.width=s.height=1;
+      const sc = s.getContext('2d'); sc.fillStyle = instColor(i); sc.fillRect(0,0,1,1);
+      const q = sc.getImageData(0,0,1,1).data; pal.push([q[0],q[1],q[2]]);
+    }
+  }
+  let built = 0;
+  for(let p=0;p<bp.length;p+=4){
+    const on = bp[p] >= 128;
+    bp[p] = bp[p+1] = bp[p+2] = on ? 255 : 0; bp[p+3] = 255;
+    if(on){
+      built++;
+      let bi = 0, bdist = Infinity;
+      const r0 = np_[p], g0 = np_[p+1], b0 = np_[p+2];
+      for(let q=0;q<pal.length;q++){
+        const dr = pal[q][0]-r0, dg = pal[q][1]-g0, db = pal[q][2]-b0;
+        const dd = dr*dr + dg*dg + db*db;
+        if(dd < bdist){ bdist = dd; bi = q; }
+      }
+      np_[p] = pal[bi][0]; np_[p+1] = pal[bi][1]; np_[p+2] = pal[bi][2];
+    } else { np_[p] = np_[p+1] = np_[p+2] = 0; }
+    np_[p+3] = 255;
+  }
+  b.putImageData(bd,0,0); n.putImageData(nd,0,0);
+  // coverage measured from the UNION of pixels, which is the only honest figure:
+  // summing polygon areas double-counts wherever two sources drew the same roof
+  return {binC, instC, W, H, gsd, nInst: k, builtFraction: built/(W*H)};
+}
+
+/* ---------- georeferencing sidecars ----------
+   A PNG alone is not a map. A world file plus a .prj makes the same PNG open in
+   QGIS or ArcGIS in the right place, and needs no GeoTIFF writer. */
+function worldFile(bb, W, H){
+  const px = (bb.e - bb.w) / W, py = (bb.n - bb.s) / H;
+  // 15 significant digits, not 12: at 12 the origin rounded ~1e-11 deg off the
+  // true pixel centre. That is a micrometre on the ground and harmless, but a
+  // georeferencing file that does not round-trip exactly invites doubt about
+  // everything else in the export.
+  return [px, 0, 0, -py, bb.w + px/2, bb.n - py/2].map(v=>v.toPrecision(15)).join('\n') + '\n';
+}
+const PRJ_WGS84 = 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],'
+  + 'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]';
+
+function dl(name, blob){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+}
+const canvasBlob = c => new Promise(res => c.toBlob(res, 'image/png'));
+
+/* ---------- the area report ----------
+   Every figure here is MEASURED from the streamed geometry. Nothing is inferred,
+   so nothing needs the estimated tag except where a height is involved. */
+function areaStats(bb, feats){
+  const idx = partsIndex(feats);
+  const areas = [], compact = [], touch = [];
+  const seen = new Set();
+  for(const f of feats){
+    const id = featKey(f);
+    if(id != null){ if(seen.has(id)) continue; seen.add(id); }
+    const g = geomStatsWhole(f, feats, idx);
+    if(!g) continue;
+    areas.push(g.area);
+    if(!g.partial) compact.push(g.compact);
+  }
+  areas.sort((a,b)=>a-b); compact.sort((a,b)=>a-b);
+  const latm = (bb.n + bb.s)/2;
+  const km2 = (bb.e-bb.w)*Math.cos(latm*Math.PI/180)*111.320 * (bb.n-bb.s)*110.540;
+  const total = areas.reduce((a,b)=>a+b,0);
+  const med = a => a.length ? a[Math.floor(a.length/2)] : null;
+  return {
+    n: areas.length, km2,
+    density: km2>0 ? areas.length/km2 : null,
+    medArea: med(areas), meanArea: areas.length ? total/areas.length : null,
+    p10: areas.length ? areas[Math.floor(areas.length*0.1)] : null,
+    p90: areas.length ? areas[Math.floor(areas.length*0.9)] : null,
+    totalBuilt: total,
+    bcr: km2>0 ? total/(km2*1e6) : null,     // building coverage ratio
+    medCompact: med(compact)
+  };
+}
+function landBreakdown(bb){
+  // share of the drawn box covered by each land-use / land-cover subtype, by
+  // feature count rather than area: exact area needs clipping to the box and the
+  // counts are honest as long as they are labelled as counts.
+  const grab = id => {
+    if(!map.getLayer(id)) return {};
+    const sw = map.project([bb.w,bb.s]), ne = map.project([bb.e,bb.n]);
+    const f = map.queryRenderedFeatures(
+      [[Math.min(sw.x,ne.x),Math.min(sw.y,ne.y)],[Math.max(sw.x,ne.x),Math.max(sw.y,ne.y)]],
+      {layers:[id]});
+    const o = {};
+    for(const x of f){ const k = x.properties.subtype||x.properties.class||'other'; o[k]=(o[k]||0)+1; }
+    return o;
+  };
+  return {land_use: grab('lu-fill'), land_cover: grab('lc-fill'),
+          land: grab('land-fill'), water: grab('wat-fill')};
+}
+function fmtRow(k, v, why){
+  return `<tr><td class="k">${k}</td><td class="v">${v}${
+    why?`<span class="why">${why}</span>`:''}</td></tr>`;
+}
+let lastFeats = null, lastStats = null, lastRaster = null;
+function areaReport(bb){
+  const body = document.getElementById('body');
+  const feats = buildingsIn(bb);
+  lastFeats = feats; lastBox = bb;
+  const st = areaStats(bb, feats);
+  // Rasterise once, here, and reuse it for the export. It is what makes the
+  // coverage figure honest: the sum of polygon areas said 76.2% over one Imbaba
+  // box while the union of pixels said 55.4%, because two sources trace the same
+  // roof and adding their areas counts that ground twice.
+  const R = renderMasks(bb, feats);
+  lastRaster = R;
+  st.cover = R.builtFraction;
+  st.overlap = st.bcr > 0 ? Math.max(0, 1 - st.cover / st.bcr) : 0;
+  lastStats = st;
+  const lb = landBreakdown(bb);
+  const num = v => v==null ? '—' : (v>=100 ? v.toFixed(0) : v.toFixed(2));
+  const lbHtml = obj => {
+    const e = Object.entries(obj).sort((a,b)=>b[1]-a[1]);
+    return e.length ? e.map(([k,v])=>`${k} <b>${v}</b>`).join(' · ') : '<span class="na">none in view</span>';
+  };
+  if(typeof isPhone === 'function' && isPhone() && snapIdx === 0) setSheet(1);
+  body.innerHTML = `
+    <p class="bid">Selected area</p>
+    <span class="chip">${st.km2 < 1 ? (st.km2*100).toFixed(1)+' ha' : st.km2.toFixed(2)+' km²'}</span>
+
+    <div class="grp"><h2>Buildings · measured</h2><table>
+      ${fmtRow('Count', `<span class="num">${st.n.toLocaleString()}</span>`)}
+      ${fmtRow('Density', `<span class="num">${num(st.density)}</span> per km²`)}
+      ${fmtRow('Median footprint', `<span class="num">${num(st.medArea)}</span> m²`)}
+      ${fmtRow('Mean footprint', `<span class="num">${num(st.meanArea)}</span> m²`)}
+      ${fmtRow('P10 – P90', `<span class="num">${num(st.p10)} – ${num(st.p90)}</span> m²`)}
+      ${fmtRow('Sum of footprints', `<span class="num">${num(st.totalBuilt)}</span> m²`,
+        'polygon areas added up — counts overlaps twice')}
+      ${fmtRow('Building coverage', `<span class="num">${(st.cover*100).toFixed(1)}</span> %`,
+        'ground actually under a building, measured from the union of pixels')}
+      ${st.overlap > 0.02 ? fmtRow('Source overlap',
+        `<span class="num">${(st.overlap*100).toFixed(0)}</span> %<span class="tag t-part">quality</span>`,
+        'how much of the summed footprint area is double-drawn — two sources tracing '
+        + 'the same roof. The coverage figure above already excludes it.') : ''}
+      ${fmtRow('Median compactness', `<span class="num">${num(st.medCompact)}</span>`,
+        '4πA/P² — 1.0 is a circle, lower is more ragged')}
+    </table></div>
+
+    <div class="grp"><h2>Land · from Overture</h2><table>
+      ${fmtRow('Land use', lbHtml(lb.land_use))}
+      ${fmtRow('Land cover', lbHtml(lb.land_cover))}
+      ${fmtRow('Natural land', lbHtml(lb.land))}
+      ${fmtRow('Water', lbHtml(lb.water))}
+    </table>
+    <span class="why">Counts of features intersecting the box, not area shares.
+    Turn the layers on to see them drawn.</span></div>
+
+    <div class="grp"><h2>Export</h2>
+      <div class="row" style="margin-bottom:7px">
+        <button id="ex-all">Download all</button>
+        <button id="ex-mask">Mask only</button>
+      </div>
+      <span class="why">A 2-colour mask (black background, white buildings), a
+      colour-coded instance mask, the footprints as GeoJSON, the statistics as CSV,
+      and world files so the images open in QGIS in the right place. Everything is
+      produced in your browser — nothing is uploaded.</span>
+    </div>
+
+    <div class="note note-warn"><strong>What this is.</strong> The mask is drawn from
+    published building footprints (Google, Microsoft, Overture), not from a model we
+    trained. Measured on this project, that data separates touching buildings about
+    five times better than our own model did.</div>`;
+  on('ex-all','click', ()=>exportArea(bb, feats, st, true));
+  on('ex-mask','click', ()=>exportArea(bb, feats, st, false));
+}
+
+/* ---------- the export bundle ---------- */
+async function exportArea(bb, feats, st, everything){
+  const btn = document.getElementById(everything?'ex-all':'ex-mask');
+  const was = btn ? btn.textContent : '';
+  if(btn){ btn.textContent = 'Preparing…'; btn.disabled = true; }
+  try{
+    // reuse the raster the report already built rather than drawing it twice
+    const {binC, instC, W, H, gsd, nInst} = lastRaster || renderMasks(bb, feats);
+    const stamp = `${bb.s.toFixed(4)}_${bb.w.toFixed(4)}`;
+    dl(`mask_${stamp}.png`, await canvasBlob(binC));
+    dl(`mask_${stamp}.pgw`, new Blob([worldFile(bb,W,H)], {type:'text/plain'}));
+    if(everything){
+      dl(`instances_${stamp}.png`, await canvasBlob(instC));
+      dl(`instances_${stamp}.pgw`, new Blob([worldFile(bb,W,H)], {type:'text/plain'}));
+      dl(`mask_${stamp}.prj`, new Blob([PRJ_WGS84], {type:'text/plain'}));
+      exportVisible(feats, `buildings_${stamp}.geojson`);
+      dl(`stats_${stamp}.csv`, new Blob([statsCSV(bb, st, W, H, gsd, nInst)], {type:'text/csv'}));
+    }
+  }catch(err){
+    if(btn) btn.textContent = 'Export failed';
+    console.error(err);
+    return;
+  }
+  if(btn){ btn.textContent = was; btn.disabled = false; }
+}
+function statsCSV(bb, st, W, H, gsd, nInst){
+  const r = [
+    ['metric','value','unit','kind'],
+    ['west',bb.w,'deg','measured'], ['south',bb.s,'deg','measured'],
+    ['east',bb.e,'deg','measured'], ['north',bb.n,'deg','measured'],
+    ['area',st.km2,'km2','measured'],
+    ['buildings',st.n,'count','measured'],
+    ['instances_in_mask',nInst,'count','measured'],
+    ['density',st.density,'per_km2','measured'],
+    ['median_footprint',st.medArea,'m2','measured'],
+    ['mean_footprint',st.meanArea,'m2','measured'],
+    ['p10_footprint',st.p10,'m2','measured'],
+    ['p90_footprint',st.p90,'m2','measured'],
+    ['sum_of_footprint_areas',st.totalBuilt,'m2','measured'],
+    ['building_coverage_union',st.cover,'fraction','measured'],
+    ['source_overlap',st.overlap,'fraction','measured'],
+    ['median_compactness',st.medCompact,'ratio','measured'],
+    ['raster_width',W,'px','measured'], ['raster_height',H,'px','measured'],
+    ['raster_gsd',gsd,'m_per_px','measured'],
+    ['source','Google Open Buildings + Microsoft (VIDA) / Overture','','provenance'],
+    ['generated',new Date().toISOString(),'','provenance']
+  ];
+  return r.map(row => row.map(c =>
+    typeof c === 'string' && /[",\n]/.test(c) ? `"${c.replace(/"/g,'""')}"` : c).join(',')).join('\n') + '\n';
+}
+
 /* ---------- export what is on screen, anywhere in the world ---------- */
-function exportVisible(feats){
+function exportVisible(feats, filename){
   const out = feats.map(f=>{
     const g = geomStatsWhole(f, feats), c = centroid(f), p = f.properties;
     let ds = p['@geometry_source'] || 'unknown';
@@ -1250,12 +1657,9 @@ function exportVisible(feats){
       _note:'geometry is tile-simplified; height must be read per building in-app'
     }};
   });
-  const blob = new Blob([JSON.stringify({type:'FeatureCollection',features:out})],
-                        {type:'application/geo+json'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download='buildings_view.geojson';
-  a.click(); URL.revokeObjectURL(a.href);
+  dl(filename || 'buildings_view.geojson',
+     new Blob([JSON.stringify({type:'FeatureCollection',features:out})],
+              {type:'application/geo+json'}));
 }
 
 /* ---------- click a building ---------- */
