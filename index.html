@@ -126,6 +126,22 @@ button:hover{border-color:var(--accent-dim);background:var(--panel)}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font-weight:600}
 
+/* ---- layer stack ---- */
+.lyrs{padding:11px 18px;border-bottom:1px solid var(--line)}
+.lyrs h2{margin:0 0 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--faint);font-weight:700}
+.lyr{display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:12px;
+  user-select:none;-webkit-user-select:none}
+.lyr:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+.lyr .sw{width:13px;height:13px;border-radius:3px;border:1px solid var(--line);flex:none;
+  position:relative;transition:background .12s,border-color .12s}
+.lyr[aria-pressed="true"] .sw{background:var(--accent);border-color:var(--accent)}
+.lyr[aria-pressed="true"] .sw::after{content:"";position:absolute;left:3.5px;top:1px;
+  width:4px;height:7px;border:solid #05121c;border-width:0 2px 2px 0;transform:rotate(43deg)}
+.lyr .src{margin-left:auto;font:9.5px/1 ui-monospace,monospace;color:var(--faint)}
+.lyr .dot{width:8px;height:8px;border-radius:2px;flex:none}
+@media (max-width:820px){ .lyr{padding:9px 0} .lyr .sw{width:16px;height:16px} }
+
 #status{padding:11px 18px;border-bottom:1px solid var(--line);font-size:11.5px;
   color:var(--dim);line-height:1.6}
 #status b{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
@@ -206,6 +222,10 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <button id="labels">Labels</button>
       </div>
     </div>
+    <div class="lyrs">
+      <h2>Layers</h2>
+      <div id="lyrlist"></div>
+    </div>
     <div id="status">Loading…</div>
     <div id="body"><p class="empty"><strong>Click any building</strong> to read its record:
       footprint, neighbours, height, floors and population share — computed live,
@@ -236,6 +256,23 @@ const PMTOVT = 'https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com
 const TILEBASE = 'https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-07-22.0/';
 const PMTROAD  = TILEBASE + 'transportation.pmtiles';
 const PMTDIV   = TILEBASE + 'divisions.pmtiles';
+/* ---------- the non-building world ----------
+   MEASURED, not assumed: every source below was range-requested with an Origin
+   header before a single line of UI was written for it, because F60 found Open
+   Buildings 2.5D and Copernicus DEM CORS-blocked after they had been designed in.
+
+     overture base.pmtiles    206 + Access-Control-Allow-Origin: *   195 GB
+     overture places.pmtiles  206 + Access-Control-Allow-Origin: *    19 GB
+     ESA WorldCover COG       206 but NO CORS HEADER  -> UNUSABLE
+
+   That last line is why land cover here is Overture's vector `land_cover`
+   rather than WorldCover's raster: the better-known product simply cannot be
+   read from a browser, and a layer we cannot fetch is not a layer.
+   Read from the PMTiles metadata rather than guessed:
+     base   z0-13  bathymetry, infrastructure, land, land_cover, land_use, water
+     places z14    place */
+const PMTBASE  = TILEBASE + 'base.pmtiles';
+const PMTPLACE = TILEBASE + 'places.pmtiles';
 
 /* ---------- reading a JSON string property from inside the style ----------
    Several Overture fields are JSON serialised into a single string: `names`,
@@ -430,6 +467,50 @@ const isCls  = v => ['match', ['get','class'],   v, true, false];
    pan, feature-state does not. */
 const dupCase = v => ['case', ['boolean', ['feature-state','dup'], false], 0, v];
 
+/* ---------- land palettes ----------
+   These fills sit OVER satellite imagery, so the colours are chosen to read
+   against it rather than against paper: desaturated, mid-value, and distinct in
+   hue rather than in lightness, because lightness contrast is what the imagery
+   underneath is already using. Subtype lists come from the Overture schema;
+   anything unmatched falls through to a neutral so a new subtype appears as
+   grey rather than disappearing. */
+const LC_COLOR = ['match', ['coalesce', ['get','subtype'], ['get','class'], ''],
+  'forest','#2f7d4f', 'tree','#2f7d4f', 'wood','#2f7d4f',
+  'grass','#6aa84f', 'meadow','#6aa84f',
+  'shrub','#7d9b52', 'scrub','#7d9b52',
+  'crop','#b8a33e', 'farmland','#b8a33e',
+  'wetland','#4a8f7a', 'mangrove','#3f8a6e', 'marsh','#4a8f7a',
+  'moss','#8ab08a',
+  'barren','#b09166', 'rock','#9d8a72', 'sand','#cdb891', 'desert','#c7ab7d',
+  'snow','#dbe8f0', 'glacier','#cfe2ee', 'ice','#dbe8f0',
+  'urban','#8b8f99', 'developed','#8b8f99',
+  'reef','#3d9bb5', 'physical','#8f9aa6',
+  // MEASURED over Cairo at z13.5, not taken from the schema page: `land` came
+  // back 10 times and `tree` 678, neither of which the docs list as land_cover
+  // subtypes. Anything still unmatched stays grey ON PURPOSE, so a subtype we
+  // have never seen is visible as unstyled rather than invisible.
+  'land','#8a9a7e',
+  '#7f8a96'];
+
+const LU_COLOR = ['match', ['coalesce', ['get','subtype'], ['get','class'], ''],
+  'residential','#c07a5a',
+  'commercial','#c9714a', 'retail','#c9714a', 'entertainment','#c9714a',
+  'education','#7a6fc0',
+  'medical','#c05a7a',
+  'military','#6b7a52',
+  'park','#4f9e5f', 'recreation','#4f9e5f', 'conservation','#3f8f52',
+  'protected','#3f8f52', 'golf','#5aa86a',
+  'agriculture','#b8a33e', 'aquaculture','#4a8f9e', 'horticulture','#a8a34e',
+  'transportation','#8b8f99', 'airport','#8b8f99',
+  'cemetery','#8a7fa8', 'religious','#8a7fa8',
+  'landfill','#9a7a4a', 'resource_extraction','#9a7a4a', 'industrial','#9a7a4a',
+  'campground','#7f9a6a', 'public','#7f8a99', 'structure','#7f8a99',
+  // MEASURED over Cairo: `managed` returned 49 features and `construction` 3,
+  // and neither appears in the subtype list the schema documents. Without this
+  // the second most common land use in view drew as unstyled grey.
+  'managed','#6f9e5a', 'construction','#a8895a', 'pedestrian','#8f96a2',
+  '#7f8a96'];
+
 const MSH = 'https://opendata.aiforgood.ai/building-density/v1/{q}/12-39-p3_ensemble_downsampled/{f}';
 let yearIdx = YEARS.length - 1;
 
@@ -453,12 +534,40 @@ const map = new maplibregl.Map({
       ovt:{type:'vector', url:'pmtiles://'+PMTOVT},
       rds:{type:'vector', url:'pmtiles://'+PMTROAD},
       div:{type:'vector', url:'pmtiles://'+PMTDIV},
-
-      selsrc:{type:'geojson', data:{type:'FeatureCollection',features:[]}}
+      bse:{type:'vector', url:'pmtiles://'+PMTBASE},
+      plc:{type:'vector', url:'pmtiles://'+PMTPLACE},
+      selsrc:{type:'geojson', data:{type:'FeatureCollection',features:[]}},
+      boxsrc:{type:'geojson', data:{type:'FeatureCollection',features:[]}}
     },
     glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     layers:[
       {id:'sat', type:'raster', source:'sat'},
+      /* ---------- the non-building world ----------
+         Drawn UNDER the buildings so a footprint is never obscured by context,
+         and every one starts hidden. F63's lesson was that adding a layer can
+         make the map read as broken - two sources on one roof looked like a bug
+         - so nothing here appears unless the user asks for it. */
+      {id:'lc-fill', type:'fill', source:'bse', 'source-layer':'land_cover',
+       layout:{visibility:'none'},
+       paint:{'fill-opacity':0.28, 'fill-color':LC_COLOR}},
+      {id:'land-fill', type:'fill', source:'bse', 'source-layer':'land',
+       layout:{visibility:'none'},
+       paint:{'fill-opacity':0.28, 'fill-color':LC_COLOR}},
+      {id:'lu-fill', type:'fill', source:'bse', 'source-layer':'land_use',
+       layout:{visibility:'none'}, minzoom:6,
+       paint:{'fill-opacity':0.20, 'fill-color':LU_COLOR}},
+      {id:'lu-line', type:'line', source:'bse', 'source-layer':'land_use',
+       layout:{visibility:'none'}, minzoom:6,
+       paint:{'line-color':LU_COLOR,'line-width':0.9,'line-opacity':0.7}},
+      {id:'wat-fill', type:'fill', source:'bse', 'source-layer':'water',
+       layout:{visibility:'none'},
+       paint:{'fill-color':'#2d7fd3','fill-opacity':0.42}},
+      {id:'wat-line', type:'line', source:'bse', 'source-layer':'water',
+       layout:{visibility:'none'},
+       paint:{'line-color':'#5cb3ff','line-width':1.1,'line-opacity':0.9}},
+      {id:'infra-line', type:'line', source:'bse', 'source-layer':'infrastructure',
+       layout:{visibility:'none'}, minzoom:13,
+       paint:{'line-color':'#e0a34a','line-width':1.2,'line-opacity':0.85}},
       // Overture underneath: fills China, Europe and North America where the primary
       // source is empty. Same styling, so a user sees "buildings", not two datasets.
       {id:'ovt-fill', type:'fill', source:'ovt', 'source-layer':'building',
@@ -751,6 +860,51 @@ function applyTheme(){
 }
 on('theme','click',()=>{ dark=!dark; applyTheme(); });
 applyTheme();
+
+/* ---------- layer stack ----------
+   ONE config drives the checkboxes, the visibility calls and the credit line.
+   applyTheme once iterated a hard-coded layer id that had stopped existing, so
+   the light theme silently left labels white on white; anything that can drift
+   from the style is now generated FROM the style's own layer ids. */
+const LAYERS = [
+  {key:'buildings', label:'Buildings',   src:'VIDA + Overture',
+   ids:['bld-fill','bld-line','ovt-fill','ovt-line'], on:true,  dot:'#5aa9e6'},
+  {key:'water',     label:'Water',       src:'Overture',
+   ids:['wat-fill','wat-line'],          on:false, dot:'#2d7fd3'},
+  {key:'landcover', label:'Land cover',  src:'Overture',
+   ids:['lc-fill','land-fill'],          on:false, dot:'#2f7d4f'},
+  {key:'landuse',   label:'Land use',    src:'Overture',
+   ids:['lu-fill','lu-line'],            on:false, dot:'#c07a5a'},
+  {key:'infra',     label:'Infrastructure', src:'Overture',
+   ids:['infra-line'],                   on:false, dot:'#e0a34a'},
+  {key:'roads',     label:'Road names',  src:'Overture',
+   ids:['road-major','road-minor'],      on:true,  dot:'#eef5fb'},
+];
+function setLayer(cfg, on){
+  cfg.on = on;
+  for(const id of cfg.ids)
+    if(map.getLayer(id)) map.setLayoutProperty(id,'visibility', on?'visible':'none');
+  const el = document.querySelector(`.lyr[data-key="${cfg.key}"]`);
+  if(el) el.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+function buildLayerUI(){
+  const host = document.getElementById('lyrlist'); if(!host) return;
+  host.innerHTML = LAYERS.map(c =>
+    `<div class="lyr" role="button" tabindex="0" data-key="${c.key}"
+          aria-pressed="${c.on}" aria-label="${c.label} layer">
+       <i class="sw"></i><i class="dot" style="background:${c.dot}"></i>
+       <span>${c.label}</span><span class="src">${c.src}</span>
+     </div>`).join('');
+  for(const c of LAYERS){
+    const el = host.querySelector(`.lyr[data-key="${c.key}"]`);
+    const hit = () => setLayer(c, !c.on);
+    el.addEventListener('click', hit);
+    // keyboard parity: a div with role=button must answer Enter and Space
+    el.addEventListener('keydown', e => {
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); hit(); }
+    });
+  }
+}
 
 /* ---------- map labels on/off ---------- */
 let labelsOn = true;
@@ -1329,6 +1483,7 @@ map.on('load', refresh);
 // applyTheme runs once before the style exists, so on a light-mode machine the label
 // colours were never re-applied. Run it again once there are layers to colour.
 map.on('load', applyTheme);
+map.on('load', ()=>{ buildLayerUI(); for(const c of LAYERS) setLayer(c, c.on); });
 </script>
 </body>
 </html>
