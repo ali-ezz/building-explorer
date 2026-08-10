@@ -126,6 +126,26 @@ button:hover{border-color:var(--accent-dim);background:var(--panel)}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font-weight:600}
 
+/* ---- compare / swipe ---- */
+#map2{position:absolute;inset:0;z-index:2}
+#swipebar{position:absolute;top:0;bottom:0;left:50%;width:2px;background:#fff;z-index:3;
+  cursor:ew-resize;touch-action:none;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+#swipebar i{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:34px;height:34px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+#swipebar i::before,#swipebar i::after{content:"";position:absolute;top:50%;width:0;height:0;
+  border:5px solid transparent;transform:translateY(-50%)}
+#swipebar i::before{left:5px;border-right-color:#16202b}
+#swipebar i::after{right:5px;border-left-color:#16202b}
+#swipebar span{position:absolute;top:12px;left:-46px;font:600 11px/1 ui-monospace,monospace;
+  color:#fff;background:rgba(10,14,19,.8);padding:5px 7px;border-radius:4px}
+#app{position:relative}
+/* provenance key, drawn over the map so it reads against the imagery */
+#provkey{position:absolute;left:10px;bottom:10px;z-index:4;display:none;gap:12px;
+  background:rgba(10,14,19,.78);padding:7px 10px;border-radius:6px;
+  font:10.5px/1 ui-monospace,monospace;color:#e7eef7}
+#provkey i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
+@media (max-width:820px){ #provkey{bottom:calc(var(--sheet,42vh) + 46px)} }
+
 /* ---- layer stack ---- */
 .lyrs{padding:11px 18px;border-bottom:1px solid var(--line)}
 .lyrs h2{margin:0 0 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
@@ -206,6 +226,16 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
 <body>
 <div id="app">
   <div id="map"></div>
+  <!-- comparison map: IMAGERY ONLY, clipped to the left of the handle. The
+       building layer is one snapshot and does not change with the year, so the
+       thing being compared is the ground - which means the overlays are not
+       missed on this side. -->
+  <div id="map2" hidden></div>
+  <div id="swipebar" hidden><i></i><span id="swipeyr">2014</span></div>
+  <div id="provkey" style="display:none">
+    <span><i style="background:#5aa9e6"></i>Google + Microsoft</span>
+    <span><i style="background:#e0a34a"></i>Overture</span>
+  </div>
   <aside>
     <div class="grab" id="grab" aria-label="Drag to resize panel"><i></i></div>
     <header>
@@ -225,6 +255,13 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       <div class="capnote" id="capnote"></div>
       <div class="row">
         <button id="area">Select area</button>
+        <button id="upload">Upload image</button>
+      </div>
+      <input type="file" id="tif" accept=".tif,.tiff,image/tiff" hidden>
+      <div class="row">
+        <button id="play" title="Step through every imagery year">▶ Timeline</button>
+        <button id="swipe" title="Compare two imagery years side by side">Compare</button>
+        <button id="prov" title="Colour buildings by which source drew them">Sources</button>
       </div>
       <div class="row">
         <button id="theme">Dark</button>
@@ -2277,6 +2314,261 @@ on('about','click', e=>{
         this project, that data separates touching buildings about five times better than the
         model we trained.</span></td></tr>
     </table></div>`;
+});
+
+/* ================= TIMELINE =================
+   The slider already moves through the captures; this just walks it. Stepping
+   stops at the end rather than looping, because a loop over 13 captures reads as
+   an animation and the point is comparison, not motion. */
+let playTimer = null;
+function setPlay(on){
+  const b = document.getElementById('play'); if(!b) return;
+  if(playTimer){ clearInterval(playTimer); playTimer = null; }
+  b.classList.toggle('on', on);
+  b.textContent = on ? '■ Stop' : '▶ Timeline';
+  if(!on) return;
+  /* BUG THIS FIXES: the app opens on the NEWEST capture, so pressing play asked
+     for the year after the last one, hit the end condition on the first tick and
+     stopped without moving. Pressing play at the end means "watch it again from
+     the beginning", so rewind first. */
+  if(yearIdx >= YEARS.length - 1){
+    yr.value = 0; yr.dispatchEvent(new Event('input'));
+  }
+  playTimer = setInterval(()=>{
+    let i = yearIdx + 1;
+    if(i >= YEARS.length){ setPlay(false); return; }
+    yr.value = i; yr.dispatchEvent(new Event('input'));
+  }, 1100);
+}
+on('play','click', ()=>setPlay(!playTimer));
+
+/* ================= WHO DREW THIS BUILDING =================
+   MEASURED ACROSS TEN CITIES by this app: the share of footprint area that is
+   drawn twice runs from 6% in Jakarta to 65% in Paris. That is not noise, it is
+   two independent products disagreeing about what exists, and it is invisible
+   while both draw in the same blue. Colouring by source turns the disagreement
+   into something a user can see and judge - and shows where ONE source alone
+   would have left a hole. */
+let provOn = false;
+const PROV_COLORS = {bld:'#5aa9e6', ovt:'#e0a34a'};
+function setProv(on){
+  provOn = on;
+  const b = document.getElementById('prov');
+  if(b){ b.classList.toggle('on', on); b.textContent = on ? 'Sources on' : 'Sources'; }
+  if(!map.getLayer('bld-fill')) return;
+  const bldC = on ? PROV_COLORS.bld : (dark ? '#5aa9e6' : '#0b60a8');
+  const ovtC = on ? PROV_COLORS.ovt : '#5aa9e6';
+  map.setPaintProperty('bld-fill','fill-color', bldC);
+  map.setPaintProperty('bld-line','line-color', bldC);
+  map.setPaintProperty('ovt-fill','fill-color', ovtC);
+  map.setPaintProperty('ovt-line','line-color', ovtC);
+  // when showing provenance, stop hiding the duplicates - the overlap IS the point
+  map.setPaintProperty('ovt-fill','fill-opacity', on ? 0.22 : dupCase(0.16));
+  map.setPaintProperty('ovt-line','line-opacity', on ? 0.85 : dupCase(0.75));
+  map.setPaintProperty('bld-fill','fill-opacity', on ? 0.22 : dupCase(0.18));
+  map.setPaintProperty('bld-line','line-opacity', on ? 0.9  : dupCase(0.9));
+  const el = document.getElementById('provkey');
+  if(el) el.style.display = on ? 'flex' : 'none';
+}
+on('prov','click', ()=>setProv(!provOn));
+
+/* ================= COMPARE TWO YEARS =================
+   A second map carrying ONLY imagery, clipped to the left of a draggable handle
+   and kept exactly in step with the main one. MapLibre cannot clip a layer, so a
+   second instance is the only way to do this; keeping it imagery-only is what
+   stops it doubling the tile traffic for buildings, roads and land as well. */
+let cmp = null, swipeX = 0.5, cmpYear = 0;
+function syncCmp(){
+  if(!cmp) return;
+  cmp.jumpTo({center: map.getCenter(), zoom: map.getZoom(),
+              bearing: map.getBearing(), pitch: map.getPitch()});
+}
+function applyClip(){
+  const m2 = document.getElementById('map2'), bar = document.getElementById('swipebar');
+  if(!m2 || !bar) return;
+  const pct = (swipeX*100).toFixed(2);
+  m2.style.clipPath = `inset(0 ${(100-pct).toFixed(2)}% 0 0)`;
+  bar.style.left = pct + '%';
+}
+function setSwipe(on){
+  const m2 = document.getElementById('map2'), bar = document.getElementById('swipebar');
+  const b = document.getElementById('swipe');
+  if(b){ b.classList.toggle('on', on); b.textContent = on ? 'Comparing' : 'Compare'; }
+  if(!on){
+    if(cmp){ cmp.remove(); cmp = null; }
+    m2.hidden = true; bar.hidden = true;
+    return;
+  }
+  m2.hidden = false; bar.hidden = false;
+  // default to the OLDEST capture, which is what makes a comparison worth making
+  cmpYear = 0;
+  document.getElementById('swipeyr').textContent = YEARS[cmpYear];
+  cmp = new maplibregl.Map({
+    container:'map2', center: map.getCenter(), zoom: map.getZoom(),
+    maxZoom:19, attributionControl:false, interactive:false,
+    style:{version:8, sources:{sat2:{type:'raster', tiles:[wbUrl(YEARS[cmpYear])],
+      tileSize:256, maxzoom:17}}, layers:[{id:'sat2', type:'raster', source:'sat2'}]}
+  });
+  applyClip(); syncCmp();
+}
+on('swipe','click', ()=>setSwipe(!cmp));
+map.on('move', syncCmp);
+map.on('moveend', syncCmp);
+(function initSwipe(){
+  const bar = document.getElementById('swipebar'); if(!bar) return;
+  let dragging = false;
+  const at = e => {
+    const t = (e.touches && e.touches[0]) || e;
+    const r = document.getElementById('app').getBoundingClientRect();
+    swipeX = Math.max(0.02, Math.min(0.98, (t.clientX - r.left)/r.width));
+    applyClip();
+  };
+  const down = e => { dragging = true; e.preventDefault(); };
+  bar.addEventListener('mousedown', down);
+  bar.addEventListener('touchstart', down, {passive:false});
+  window.addEventListener('mousemove', e => { if(dragging) at(e); });
+  window.addEventListener('touchmove', e => { if(dragging){ e.preventDefault(); at(e); } },
+                          {passive:false});
+  window.addEventListener('mouseup', ()=>{ dragging = false; });
+  window.addEventListener('touchend', ()=>{ dragging = false; });
+  // clicking the year chip steps the comparison year
+  document.getElementById('swipeyr').addEventListener('click', e => {
+    e.stopPropagation();
+    if(!cmp) return;
+    cmpYear = (cmpYear + 1) % YEARS.length;
+    document.getElementById('swipeyr').textContent = YEARS[cmpYear];
+    cmp.getSource('sat2').setTiles([wbUrl(YEARS[cmpYear])]);
+  });
+})();
+
+/* ================= UPLOAD YOUR OWN IMAGE =================
+   Drop a georeferenced GeoTIFF and it lands on the map at its own coordinates,
+   read with the same geotiff.js already used for the height rasters. The file is
+   opened with FileReader and never leaves the machine — there is no server here
+   to send it to, which is the point.
+
+   Once placed, everything the app already does works over its footprint: the
+   area report, block complexity, and the two-colour mask export for exactly the
+   ground the image covers. That is the useful half of "classify my image" and it
+   needs no model at all — the footprints come from the published data, which
+   F57 measured as separating buildings better than the model we trained. */
+let overlayId = null;
+function removeOverlay(){
+  if(!overlayId) return;
+  if(map.getLayer('up-img')) map.removeLayer('up-img');
+  if(map.getSource('upsrc')) map.removeSource('upsrc');
+  overlayId = null;
+  const b = document.getElementById('upload');
+  if(b){ b.classList.remove('on'); b.textContent = 'Upload image'; }
+}
+on('upload','click', ()=>{
+  if(overlayId){ removeOverlay(); return; }
+  document.getElementById('tif').click();
+});
+on('tif','change', async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = '';                    // allow re-picking the same file
+  if(!file) return;
+  const body = document.getElementById('body');
+  const say = html => { body.innerHTML = html; };
+  say(`<p class="bid">${file.name}</p><p class="empty">Reading…</p>`);
+  try{
+    const GT = await loadGeoTIFF();
+    const buf = await file.arrayBuffer();
+    const tif = await GT.fromArrayBuffer(buf);
+    const img = await tif.getImage();
+    const W = img.getWidth(), H = img.getHeight();
+    let bbox;
+    try { bbox = img.getBoundingBox(); }
+    catch(e){ bbox = null; }
+    if(!bbox) throw new Error('this file carries no georeferencing');
+
+    /* A GeoTIFF can be in any projection. Web Mercator metres are detected and
+       converted; degrees pass through; anything else is refused rather than
+       silently drawn in the wrong place, which is the failure that would be
+       hardest for a user to notice. */
+    let [w,s,e,n] = bbox;
+    const looksMetres = Math.abs(w) > 180 || Math.abs(e) > 180 ||
+                        Math.abs(s) > 90  || Math.abs(n) > 90;
+    if(looksMetres){
+      const R = 20037508.342789244;
+      const toLng = x => x*180/R;
+      const toLat = y => (2*Math.atan(Math.exp(y*Math.PI/R)) - Math.PI/2)*180/Math.PI;
+      [w,e] = [toLng(w), toLng(e)]; [s,n] = [toLat(s), toLat(n)];
+    }
+    if(!(isFinite(w)&&isFinite(s)&&isFinite(e)&&isFinite(n)) ||
+       Math.abs(w)>180 || Math.abs(e)>180 || Math.abs(s)>90 || Math.abs(n)>90)
+      throw new Error('the coordinates are not WGS84 or Web Mercator — reproject it first');
+
+    // decode to RGB. Single-band files are shown as greyscale so a mask or a
+    // DEM is still visible rather than failing.
+    const MAXW = 2048, scale = Math.min(1, MAXW/Math.max(W,H));
+    const rw = Math.max(1, Math.round(W*scale)), rh = Math.max(1, Math.round(H*scale));
+    const data = await img.readRasters({width:rw, height:rh});
+    const bands = data.length;
+    const cv = document.createElement('canvas'); cv.width = rw; cv.height = rh;
+    const ctx = cv.getContext('2d');
+    const out = ctx.createImageData(rw, rh);
+    const norm = arr => {
+      let lo = Infinity, hi = -Infinity;
+      for(let i=0;i<arr.length;i+=97){ const v=arr[i];
+        if(v<lo) lo=v; if(v>hi) hi=v; }
+      if(!isFinite(lo)||!isFinite(hi)||hi===lo) return v => v;
+      return v => (v-lo)/(hi-lo)*255;
+    };
+    const f0 = norm(data[0]);
+    for(let i=0;i<rw*rh;i++){
+      const p = i*4;
+      if(bands >= 3){
+        out.data[p]   = data[0][i];
+        out.data[p+1] = data[1][i];
+        out.data[p+2] = data[2][i];
+      } else {
+        const g = f0(data[0][i]);
+        out.data[p] = out.data[p+1] = out.data[p+2] = g;
+      }
+      out.data[p+3] = 255;
+    }
+    ctx.putImageData(out, 0, 0);
+
+    removeOverlay();
+    map.addSource('upsrc', {type:'image', url: cv.toDataURL('image/png'),
+      coordinates: [[w,n],[e,n],[e,s],[w,s]]});
+    map.addLayer({id:'up-img', type:'raster', source:'upsrc',
+      paint:{'raster-opacity':0.95}}, 'ovt-fill');
+    overlayId = file.name;
+    const b = document.getElementById('upload');
+    if(b){ b.classList.add('on'); b.textContent = 'Remove image'; }
+    map.fitBounds([[w,s],[e,n]], {padding:40, duration:800});
+
+    const areaKm2 = (e-w)*Math.cos((n+s)/2*Math.PI/180)*111.320*(n-s)*110.540;
+    say(`<p class="bid">${file.name}</p><span class="chip">placed</span>
+      <div class="grp"><h2>Your image · measured</h2><table>
+        ${fmtRow('Size', `<span class="num">${W} × ${H}</span> px`)}
+        ${fmtRow('Bands', `<span class="num">${bands}</span>`)}
+        ${fmtRow('Ground resolution',
+          `<span class="num">${((e-w)*Math.cos((n+s)/2*Math.PI/180)*111320/W).toFixed(2)}</span> m/px`)}
+        ${fmtRow('Extent', `<span class="num">${areaKm2.toFixed(3)}</span> km²`)}
+        ${fmtRow('Coordinates', looksMetres ? 'Web Mercator → converted' : 'WGS84 degrees')}
+      </table></div>
+      <div class="row" style="margin-top:10px">
+        <button id="up-analyse">Analyse this footprint</button>
+      </div>
+      <div class="note note-info"><strong>Your file stayed on this machine.</strong>
+      There is no server in this application to upload it to. Analysing its footprint
+      measures the published building data for exactly the ground your image covers,
+      so you can compare the two.</div>`);
+    on('up-analyse','click', ()=>{
+      const bb = {w, s, e, n};
+      drawBox2(bb); areaReport(bb);
+    });
+  }catch(err){
+    say(`<p class="bid">${file.name}</p>
+      <div class="note note-warn"><strong>Could not place this file.</strong>
+      ${String(err.message || err)}.<br><br>It needs to be a GeoTIFF carrying its own
+      georeferencing, in WGS84 degrees or Web Mercator. A plain PNG or JPEG has no
+      coordinates, so there is no way to know where on Earth it belongs.</div>`);
+  }
 });
 
 map.on('load', refresh);
