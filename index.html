@@ -236,9 +236,10 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       <div id="lyrlist"></div>
     </div>
     <div id="status">Loading…</div>
-    <div id="body"><p class="empty"><strong>Click any building</strong> to read its record:
-      footprint, neighbours, height, floors and population share — computed live,
-      anywhere on Earth.</p></div>
+    <div id="body"><p class="empty"><strong>Click any building</strong> to read its record —
+      footprint, touching neighbours, street access, height and floors. Or
+      <strong>Select area</strong> to measure a neighbourhood and export its
+      two-colour mask. Computed live, anywhere on Earth.</p></div>
     <div class="legend">
       <span><i style="background:var(--measured)"></i>measured</span>
       <span><i style="background:var(--estimated)"></i>estimated</span>
@@ -571,7 +572,7 @@ const map = new maplibregl.Map({
   attributionControl:false,   // added explicitly below in compact form
   style:{version:8, sources:{
       sat:{type:'raster', tiles:[wbUrl(YEARS[YEARS.length-1])], tileSize:256, maxzoom:17,
-           attribution:'Imagery: Esri · Buildings: Google Open Buildings + Microsoft, combined by VIDA (CC BY-4.0/ODbL) · Roads: Overture · Height: Microsoft (CDLA-2.0)'},
+           attribution:'Imagery: Esri · Buildings: Google Open Buildings + Microsoft, combined by VIDA (CC BY-4.0/ODbL) · Roads, water, land &amp; places: Overture Maps (ODbL/CC BY-4.0), incl. data © OpenStreetMap contributors · Height: Microsoft (CDLA-2.0)'},
       bld:{type:'vector', url:'pmtiles://'+PMT},
       ovt:{type:'vector', url:'pmtiles://'+PMTOVT},
       rds:{type:'vector', url:'pmtiles://'+PMTROAD},
@@ -914,8 +915,19 @@ function applyTheme(){
 on('theme','click',()=>{ dark=!dark; applyTheme(); });
 applyTheme();
 on('area','click',()=>setDrawMode(!drawing));
+function clearSelection(){
+  boxA = boxB = null; lastBox = null; lastFeats = null; lastRaster = null; lastBC = null;
+  const bs = map.getSource('boxsrc'); if(bs) bs.setData({type:'FeatureCollection',features:[]});
+  const ss = map.getSource('selsrc'); if(ss) ss.setData({type:'FeatureCollection',features:[]});
+  const b = document.getElementById('body');
+  if(b) b.innerHTML = `<p class="empty"><strong>Click any building</strong> to read its record,
+    or <strong>Select area</strong> to measure a whole neighbourhood and export its mask.</p>`;
+}
 // Escape leaves draw mode - a mode you cannot get out of is a trap
-document.addEventListener('keydown', e => { if(e.key === 'Escape' && drawing) setDrawMode(false); });
+document.addEventListener('keydown', e => {
+  if(e.key !== 'Escape') return;
+  if(drawing) setDrawMode(false); else if(lastBox) clearSelection();
+});
 
 /* ---------- layer stack ----------
    ONE config drives the checkboxes, the visibility calls and the credit line.
@@ -1383,7 +1395,15 @@ function drawBox2(bb){
     geometry:{type:'Polygon', coordinates:[[[bb.w,bb.s],[bb.e,bb.s],[bb.e,bb.n],[bb.w,bb.n],[bb.w,bb.s]]]}}]});
 }
 
-/* ---------- which buildings fall in the box ---------- */
+/* ---------- which buildings fall in the box ----------
+   CAUGHT IN TESTING: with the Buildings layer switched off, selecting an area
+   reported "0 buildings" and drew an all-black mask. That is the same defect as
+   the missing-road case — an absent LAYER and an absent BUILDING rendering
+   identically — so the report has to be able to tell the two apart. */
+function buildingsLayerOn(){
+  return BLD_LAYERS.some(l => map.getLayer(l) &&
+    map.getLayoutProperty(l,'visibility') !== 'none');
+}
 function buildingsIn(bb){
   const sw = map.project([bb.w, bb.s]), ne = map.project([bb.e, bb.n]);
   const f = map.queryRenderedFeatures(
@@ -1672,8 +1692,14 @@ function blockComplexity(bb, feats){
   const B = [...byId.values()];
   if(!B.length) return null;
 
-  // street access
-  for(const b of B) b.front = lines.length ? b.rings.some(r => nearRoad(r, ri, ACCESS_M)) : false;
+  /* MEASURED IN A GLOBAL SWEEP: over Paris and Sao Paulo the road tiles had not
+     arrived when the report ran, and every building was therefore marked as not
+     fronting a street. The panel then said "0% fronting" and "no route to a
+     street" — which is not a weak claim, it is a FALSE and alarming one about
+     real neighbourhoods. No road data and no street access are different facts
+     and must not render the same. */
+  if(!lines.length) return {noRoads:true, n:B.length};
+  for(const b of B) b.front = b.rings.some(r => nearRoad(r, ri, ACCESS_M));
 
   // adjacency via a grid on building bounding boxes in metre space
   const cell = 30, grid = new Map();
@@ -1819,6 +1845,12 @@ function fmtRow(k, v, why){
 let lastFeats = null, lastStats = null, lastRaster = null, lastBC = null;
 function areaReport(bb){
   const body = document.getElementById('body');
+  if(!buildingsLayerOn()){
+    body.innerHTML = `<p class="bid">Selected area</p>
+      <p class="empty">The <strong>Buildings</strong> layer is switched off, so there is
+      nothing to measure or export. Turn it back on in Layers and select the area again.</p>`;
+    return;
+  }
   const feats = buildingsIn(bb);
   lastFeats = feats; lastBox = bb;
   const st = areaStats(bb, feats);
@@ -1865,7 +1897,11 @@ function areaReport(bb){
         '4πA/P² — 1.0 is a circle, lower is more ragged')}
     </table></div>
 
-    ${bc ? `<div class="grp"><h2>Street access · measured</h2><table>
+    ${bc && bc.noRoads ? `<div class="grp"><h2>Street access</h2>
+      <p class="empty">No road data has loaded for this area yet, so street access
+      and block complexity cannot be computed. Pan or zoom to load the road tiles,
+      then select the area again.</p></div>` : ''}
+    ${bc && !bc.noRoads ? `<div class="grp"><h2>Street access · measured</h2><table>
       ${fmtRow('Block complexity', `<span class="num">k = ${bc.medianBlockK ?? '—'}</span>
         <span class="tag" style="color:${kv[1]};background:color-mix(in srgb,${kv[1]} 15%,transparent)">${kv[0]}</span>`,
         'parcels to cross from the least reachable building out to a street. '
@@ -1901,6 +1937,7 @@ function areaReport(bb){
       <div class="row" style="margin-bottom:7px">
         <button id="ex-all">Download all</button>
         <button id="ex-mask">Mask only</button>
+        <button id="ex-clear">Clear</button>
       </div>
       <span class="why">A 2-colour mask (black background, white buildings), a
       colour-coded instance mask, the footprints as GeoJSON, the statistics as CSV,
@@ -1914,6 +1951,7 @@ function areaReport(bb){
     five times better than our own model did.</div>`;
   on('ex-all','click', ()=>exportArea(bb, feats, st, true));
   on('ex-mask','click', ()=>exportArea(bb, feats, st, false));
+  on('ex-clear','click', clearSelection);
 }
 
 /* ---------- the export bundle ---------- */
@@ -2209,7 +2247,10 @@ on('about','click', e=>{
         streamed as vector tiles — nothing is stored in this file. Measured over one
         dense test area it carries 1,071 buildings where a conflated alternative
         carried 342.</span></td></tr>
-      <tr><td class="k">Road names</td><td class="v">Overture Maps</td></tr>
+      <tr><td class="k">Roads, water, land cover,<br>land use, places, divisions</td>
+        <td class="v">Overture Maps (ODbL / CC BY-4.0)
+        <span class="why">the base, transportation, places and divisions themes,
+        streamed as PMTiles. Includes data © OpenStreetMap contributors.</span></td></tr>
       <tr><td class="k">Height</td><td class="v">Microsoft (CDLA-2.0)
         <span class="why">~76 m grid, 2020 Q4 and 2023 Q4, read live from cloud-optimised
         rasters</span></td></tr>
@@ -2221,7 +2262,21 @@ on('about','click', e=>{
     Keep this panel in any redistributed copy.</div>
     <div class="note note-info"><strong>What is measured vs estimated.</strong> Footprint
     geometry is measured from the tiles. Height, floors and population are estimated and
-    labelled as such. Population is an allocation of a total you supply — never a headcount.</div>`;
+    labelled as such. Population is an allocation of a total you supply — never a headcount.</div>
+    <div class="grp"><h2>Area analysis</h2><table>
+      <tr><td class="k">Block complexity</td><td class="v">computed here
+        <span class="why">k — parcels to cross from the least reachable building out to a
+        street. The method is from Nature (2025), <em>Infrastructure deficits and informal
+        settlements in sub-Saharan Africa</em>. Only as good as the road map: where alleys
+        are unmapped, k reads too high.</span></td></tr>
+      <tr><td class="k">Building coverage</td><td class="v">computed here
+        <span class="why">from the union of rasterised footprints, not the sum of polygon
+        areas — two sources tracing one roof would otherwise count that ground twice.</span></td></tr>
+      <tr><td class="k">Exported masks</td><td class="v">computed here
+        <span class="why">drawn from the published footprints, not from a model. Measured on
+        this project, that data separates touching buildings about five times better than the
+        model we trained.</span></td></tr>
+    </table></div>`;
 });
 
 map.on('load', refresh);
