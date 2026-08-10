@@ -140,7 +140,13 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
   width:4px;height:7px;border:solid #05121c;border-width:0 2px 2px 0;transform:rotate(43deg)}
 .lyr .src{margin-left:auto;font:9.5px/1 ui-monospace,monospace;color:var(--faint)}
 .lyr .dot{width:8px;height:8px;border-radius:2px;flex:none}
-@media (max-width:820px){ .lyr{padding:9px 0} .lyr .sw{width:16px;height:16px} }
+/* MEASURED at 390 px wide: these came out 37 px tall, under the 44 px minimum -
+   the same defect DEPLOY.md records fixing for the buttons, reappearing on a new
+   control. min-height is set explicitly rather than trusting padding arithmetic,
+   which is what let it drift the first time. */
+@media (max-width:820px){
+  .lyr{padding:12px 0;min-height:44px} .lyr .sw{width:17px;height:17px}
+}
 
 #status{padding:11px 18px;border-bottom:1px solid var(--line);font-size:11.5px;
   color:var(--dim);line-height:1.6}
@@ -495,6 +501,39 @@ const LC_COLOR = ['match', ['coalesce', ['get','subtype'], ['get','class'], ''],
   'land','#8a9a7e',
   '#7f8a96'];
 
+/* MEASURED over Imbaba, not read off the schema page: `basic_category` returns
+   LEAF values - dental_clinic, pharmacy_and_drug_store, food_and_beverage_store,
+   vehicle_parts_store, bank_or_credit_union - not the dozen top-level groups the
+   docs describe. An exact match list would need hundreds of entries and would go
+   stale on every taxonomy change, so this tests for a SUBSTRING instead and one
+   rule covers a whole family: 'clinic', 'pharmacy' and 'hospital' all read as
+   health without naming any of them.
+
+   Overture also replaced `categories` with `basic_category` and drops the old
+   field in the September 2026 release, so both are read. */
+const catStr = ['downcase', ['coalesce', ['get','basic_category'], ['get','category'], '']];
+const catHas = sub => ['>=', ['index-of', sub, catStr], 0];
+const PLACE_COLOR = ['case',
+  ['any', catHas('health'), catHas('medical'), catHas('clinic'), catHas('hospital'),
+          catHas('pharmacy'), catHas('dental'), catHas('doctor')],      '#e05a7a',
+  ['any', catHas('school'), catHas('education'), catHas('university'),
+          catHas('college'), catHas('library'), catHas('learning')],    '#7a6fc0',
+  ['any', catHas('restaurant'), catHas('cafe'), catHas('food'), catHas('bakery'),
+          catHas('eat'), catHas('drink'), catHas('bar')],               '#e0a34a',
+  ['any', catHas('store'), catHas('shop'), catHas('retail'), catHas('market'),
+          catHas('supermarket')],                                       '#4d9fe8',
+  ['any', catHas('religio'), catHas('mosque'), catHas('church'), catHas('temple')], '#a88fd0',
+  ['any', catHas('government'), catHas('civic'), catHas('public_service'),
+          catHas('police'), catHas('post')],                            '#5aa9e6',
+  ['any', catHas('hotel'), catHas('accommodation'), catHas('lodging')],  '#6fcf97',
+  ['any', catHas('bank'), catHas('financial'), catHas('atm'), catHas('insurance')], '#6fc4b0',
+  ['any', catHas('automotive'), catHas('vehicle'), catHas('car_'), catHas('fuel'),
+          catHas('gas_station')],                                       '#8a94a4',
+  ['any', catHas('park'), catHas('sport'), catHas('gym'), catHas('active'),
+          catHas('attraction'), catHas('recreation')],                  '#7ec06a',
+  ['any', catHas('professional'), catHas('service'), catHas('office')],  '#b0a0c8',
+  '#9aa6b4'];   // no category at all - 8 of 39 over Imbaba - stays neutral
+
 const LU_COLOR = ['match', ['coalesce', ['get','subtype'], ['get','class'], ''],
   'residential','#c07a5a',
   'commercial','#c9714a', 'retail','#c9714a', 'entertainment','#c9714a',
@@ -571,6 +610,13 @@ const map = new maplibregl.Map({
       {id:'infra-line', type:'line', source:'bse', 'source-layer':'infrastructure',
        layout:{visibility:'none'}, minzoom:13,
        paint:{'line-color':'#e0a34a','line-width':1.2,'line-opacity':0.85}},
+      /* Places are POINTS at z14 only. Colour carries the top-level category so
+         a clinic and a school are distinguishable without reading every label. */
+      {id:'plc-dot', type:'circle', source:'plc', 'source-layer':'place',
+       layout:{visibility:'none'}, minzoom:14,
+       paint:{'circle-radius':['interpolate',['linear'],['zoom'],14,2.4,18,5],
+              'circle-color':PLACE_COLOR, 'circle-opacity':0.9,
+              'circle-stroke-width':1, 'circle-stroke-color':'rgba(6,12,20,.65)'}},
       // Overture underneath: fills China, Europe and North America where the primary
       // source is empty. Same styling, so a user sees "buildings", not two datasets.
       {id:'ovt-fill', type:'fill', source:'ovt', 'source-layer':'building',
@@ -887,6 +933,8 @@ const LAYERS = [
    ids:['lu-fill','lu-line'],            on:false, dot:'#c07a5a'},
   {key:'infra',     label:'Infrastructure', src:'Overture',
    ids:['infra-line'],                   on:false, dot:'#e0a34a'},
+  {key:'places',    label:'Places',      src:'Overture',
+   ids:['plc-dot'],                      on:false, dot:'#4d9fe8'},
   {key:'roads',     label:'Road names',  src:'Overture',
    ids:['road-major','road-minor'],      on:true,  dot:'#eef5fb'},
 ];
@@ -1697,6 +1745,18 @@ function blockComplexity(bb, feats){
     roadSegs: ri.segs.length, roadLines: lines.length
   };
 }
+/* street access for ONE clicked building, over a small window around it rather
+   than the whole view - this runs on every click, so it must stay cheap */
+function streetAccessOf(f){
+  const ring = outerRing(f); if(!ring) return null;
+  const [w,s,e,n] = bboxOf(ring);
+  const pad = 0.0004;
+  const bb = {w:w-pad, s:s-pad, e:e+pad, n:n+pad};
+  const lines = roadsIn(bb);
+  if(!lines.length) return null;             // no roads loaded: say nothing, not "no"
+  const prj = mProj((s+n)/2);
+  return nearRoad(ring.map(prj), roadIndex(lines, prj, 40), ACCESS_M);
+}
 function kVerdict(k){
   if(k == null) return ['—',''];
   if(k <= 2) return ['planned','var(--measured)'];
@@ -1971,6 +2031,14 @@ async function onBuildingClick(e){
       ${gs?`<tr><td class="k">Compactness</td><td class="v"><span class="num">${gs.compact.toFixed(2)}</span>${
         gs.partial?'<span class="tag t-part">partial</span>':''}</td></tr>`:''}
       ${nb!=null?`<tr><td class="k">Touching neighbours</td><td class="v"><span class="num">${nb}</span></td></tr>`:''}
+      ${(()=>{ const sa = streetAccessOf(f);
+        if(sa == null) return '';
+        return `<tr><td class="k">Street access</td><td class="v">${
+          sa ? '<span style="color:var(--measured)">yes</span>'
+             : '<span style="color:var(--estimated)">no</span>'}
+          <span class="why">within ${ACCESS_M} m of a mapped road centreline.
+          Where alleys are unmapped this reads &ldquo;no&rdquo; for a building that
+          does have access.</span></td></tr>`; })()}
       ${gs&&gs.partial?`<tr><td class="k">Split across tiles</td><td class="v"><span class="num">${gs.parts}</span> pieces
         <span class="why">Area is summed and correct. Perimeter and compactness come from
         the largest piece — a tile cut is not a real wall.</span></td></tr>`:''}
