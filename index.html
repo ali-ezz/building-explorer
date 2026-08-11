@@ -309,7 +309,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <button id="upload">Upload image</button>
         <button id="theme">Dark</button>
       </div>
-      <input type="file" id="tif" accept=".tif,.tiff,image/tiff" hidden>
+      <input type="file" id="tif" accept=".tif,.tiff,image/tiff,.jpg,.jpeg,.png,.webp" hidden>
     </div>
     <div class="lyrs">
       <h2>Outlines</h2>
@@ -1914,18 +1914,36 @@ function mercBox(bb){
   return {x0: toMercX(bb.w), x1: toMercX(bb.e),
           y0: toMercY(bb.s), y1: toMercY(bb.n)};
 }
-function rasterGrid(bb){
+/* `grid` lets a caller impose someone else's pixel grid instead of taking the
+   default half-metre Mercator one:  grid = {W, H, proj:'merc'|'deg'}
+
+   That exists for uploaded imagery. A mask covering "about the same area" as
+   your photograph is not much use; a mask at your photograph's exact width,
+   height and projection drops straight onto it, pixel for pixel.
+
+   `proj` is not cosmetic. A GeoTIFF written in EPSG:3857 has rows uniform in
+   Mercator metres; one in EPSG:4326 has rows uniform in degrees. Rendering the
+   second through Mercator slides the mask against the very image it was made to
+   overlay, by more the further from the equator. */
+function rasterGrid(bb, grid){
   const m = mercBox(bb);
   const wm = m.x1 - m.x0, hm = m.y1 - m.y0;      // metres in the projection
   const latm = (bb.n + bb.s) / 2;
   // Mercator exaggerates by 1/cos(lat); divide it out so GSD is true ground metres
   const k = Math.cos(latm * Math.PI/180);
-  let gsd = 0.5;
-  let W = Math.round(wm * k / gsd), H = Math.round(hm * k / gsd);
-  if(Math.max(W,H) > MAX_PX){ const f = MAX_PX/Math.max(W,H); W = Math.round(W*f); H = Math.round(H*f); }
-  W = Math.max(1,W); H = Math.max(1,H);
-  gsd = wm * k / W;
-  return {W, H, gsd, wm, hm, merc:m};
+  const proj = (grid && grid.proj) || 'merc';
+  let gsd = 0.5, W, H;
+  if(grid && grid.W && grid.H){
+    W = Math.max(1, Math.round(grid.W)); H = Math.max(1, Math.round(grid.H));
+    if(Math.max(W,H) > MAX_PX){ const f = MAX_PX/Math.max(W,H);
+      W = Math.max(1, Math.round(W*f)); H = Math.max(1, Math.round(H*f)); }
+  } else {
+    W = Math.round(wm * k / gsd); H = Math.round(hm * k / gsd);
+    if(Math.max(W,H) > MAX_PX){ const f = MAX_PX/Math.max(W,H); W = Math.round(W*f); H = Math.round(H*f); }
+    W = Math.max(1,W); H = Math.max(1,H);
+  }
+  gsd = proj === 'deg' ? (bb.e - bb.w) * k * 111320 / W : wm * k / W;
+  return {W, H, gsd, wm, hm, merc:m, proj};
 }
 function ringToPath(ctx, ring, bb, W, H){
   ctx.beginPath();
@@ -2023,10 +2041,15 @@ function fillRings(rings, id, own, W, H, PX, PY){
     }
   }
 }
-function renderMasks(bb, feats){
-  const {W, H, gsd, merc:M} = rasterGrid(bb);
-  const PX = lng => (toMercX(lng) - M.x0) / (M.x1 - M.x0) * W;
-  const PY = lat => (M.y1 - toMercY(lat)) / (M.y1 - M.y0) * H;
+function renderMasks(bb, feats, grid){
+  const G = rasterGrid(bb, grid);
+  const {W, H, gsd, merc:M} = G;
+  const PX = G.proj === 'deg'
+    ? lng => (lng - bb.w) / (bb.e - bb.w) * W
+    : lng => (toMercX(lng) - M.x0) / (M.x1 - M.x0) * W;
+  const PY = G.proj === 'deg'
+    ? lat => (bb.n - lat) / (bb.n - bb.s) * H
+    : lat => (M.y1 - toMercY(lat)) / (M.y1 - M.y0) * H;
   // one Int32 per pixel: 0 background, otherwise the 1-based instance number
   const own = new Int32Array(W*H);
   // group tile-split pieces so one building gets ONE id (F59: 7.6% of polygons
@@ -2109,13 +2132,18 @@ function renderMasks(bb, feats){
   b.putImageData(bd,0,0); n.putImageData(nd,0,0);
   // coverage measured from the UNION of pixels, which is the only honest figure:
   // summing polygon areas double-counts wherever two sources drew the same roof
-  return {binC, instC, W, H, gsd, nInst: k, builtFraction: built/(W*H), seam};
+  return {binC, instC, W, H, gsd, nInst: k, builtFraction: built/(W*H), seam,
+          proj: G.proj};
 }
 
 /* ---------- georeferencing sidecars ----------
    A PNG alone is not a map. A world file plus a .prj makes the same PNG open in
    QGIS or ArcGIS in the right place, and needs no GeoTIFF writer. */
-function worldFile(bb, W, H){
+function worldFile(bb, W, H, proj){
+  if(proj === 'deg'){
+    const dx = (bb.e - bb.w) / W, dy = (bb.n - bb.s) / H;
+    return [dx, 0, 0, -dy, bb.w + dx/2, bb.n - dy/2].map(v=>v.toPrecision(15)).join('\n') + '\n';
+  }
   const M = mercBox(bb);
   const px = (M.x1 - M.x0) / W, py = (M.y1 - M.y0) / H;
   // 15 significant digits, not 12: at 12 the origin rounded ~1e-11 deg off the
@@ -2124,6 +2152,12 @@ function worldFile(bb, W, H){
   // everything else in the export.
   return [px, 0, 0, -py, M.x0 + px/2, M.y1 - py/2].map(v=>v.toPrecision(15)).join('\n') + '\n';
 }
+// EPSG:4326, for a mask rendered on a degree grid (an uploaded WGS84 GeoTIFF)
+const PRJ_4326 = 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,'
+  + '298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],'
+  + 'PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],'
+  + 'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],'
+  + 'AUTHORITY["EPSG","4326"]]';
 // EPSG:3857, matching the raster the mask is drawn in
 const PRJ_3857 = 'PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",'
   + 'DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],'
@@ -2753,19 +2787,23 @@ async function exportArea(bb, feats, st, everything, raster){
     // the raster is passed in, never pulled from module state: exporting the
     // current view while a selection existed used to write the SELECTION's
     // pixels under the view's world file, which is a silently wrong georeference
-    const {binC, instC, W, H, gsd, nInst} = raster || renderMasks(bb, feats);
+    const R = raster || renderMasks(bb, feats);
+    const {binC, instC, W, H, gsd, nInst} = R;
     const stamp = `${bb.s.toFixed(4)}_${bb.w.toFixed(4)}`;
     const N = exportNames(stamp, everything);
-    const wf = worldFile(bb, W, H);
+    // the sidecars describe the grid the pixels were ACTUALLY drawn on, which
+    // for an uploaded WGS84 GeoTIFF is degrees, not Mercator
+    const wf = worldFile(bb, W, H, R.proj);
+    const PRJ = R.proj === 'deg' ? PRJ_4326 : PRJ_3857;
     const files = [
       {name:N.mask,  blob: await canvasBlob(binC)},
       {name:N.maskw, text: wf},
-      {name:N.maskp, text: PRJ_3857},
+      {name:N.maskp, text: PRJ},
     ];
     if(everything) files.push(
       {name:N.inst,  blob: await canvasBlob(instC)},
       {name:N.instw, text: wf},
-      {name:N.instp, text: PRJ_3857},
+      {name:N.instp, text: PRJ},
       {name:N.geo,   text: JSON.stringify(buildingsGeoJSON(feats))},
       {name:N.csv,   text: statsCSV(bb, st, W, H, gsd, nInst)},
       {name:N.txt,   text: manifest(bb, st, W, H, gsd, nInst, stamp, N)}
@@ -2830,7 +2868,7 @@ function statsCSV(bb, st, W, H, gsd, nInst){
     ['road_segments_used',BC?BC.roadSegs:'', 'count','provenance'],
     ['raster_width',W,'px','measured'], ['raster_height',H,'px','measured'],
     ['raster_gsd',gsd,'m_per_px','measured'],
-    ['raster_crs','EPSG:3857','','provenance'],
+    ['raster_crs', (lastRaster && lastRaster.proj === 'deg') ? 'EPSG:4326' : 'EPSG:3857','','provenance'],
     ['min_confidence_filter',minConf,'0-1','provenance'],
     ['building_sources', srcCredit(), '', 'provenance'],
     ['building_vintage', BLD_VINTAGE, 'year', 'provenance'],
@@ -2853,18 +2891,28 @@ function statsCSV(bb, st, W, H, gsd, nInst){
 function manifest(bb, st, W, H, gsd, nInst, stamp, N){
   const M = mercBox(bb);
   const BC = lastBC;
+  /* The raster may be on the app's default Mercator grid or on an uploaded
+     image's own grid, and the sidecars must name whichever it actually is. */
+  const CRS = (lastRaster && lastRaster.proj === 'deg') ? 'EPSG:4326' : 'EPSG:3857';
+  const seamPx = (lastRaster && lastRaster.seam) || 0;
+  const builtPx = Math.max(1, Math.round(st.cover * W * H));
+  const SEAM_PCT = (100*seamPx/builtPx).toFixed(1);
   return [
 `AREA EXPORT   ${stamp}`,
 `generated     ${new Date().toISOString()}`,
 `bounds        W ${bb.w}  S ${bb.s}  E ${bb.e}  N ${bb.n}   (EPSG:4326, degrees)`,
 `              W ${M.x0.toFixed(2)}  S ${M.y0.toFixed(2)}  E ${M.x1.toFixed(2)}  N ${M.y1.toFixed(2)}   (EPSG:3857, metres)`,
 `area          ${st.km2.toFixed(4)} km2`,
-`raster        ${W} x ${H} px at ${gsd.toFixed(3)} m/px, EPSG:3857`,
+`raster        ${W} x ${H} px at ${gsd.toFixed(3)} m/px, ${CRS}`,
 ``,
 `FILES IN THIS ARCHIVE`,
 `  ${N.mask}`,
-`      The deliverable. TWO colours only, verified pixel by pixel before`,
-`      writing: 0,0,0 background and 255,255,255 building. No grey edge.`,
+`      The deliverable. TWO colours only: 0,0,0 background, 255,255,255`,
+`      building — scanline-filled, so there is no antialiasing to undo.`,
+`      Buildings that share a wall are SEPARATED by a one-pixel black seam`,
+`      (${SEAM_PCT}% of the built pixels), so connected components returns one`,
+`      component per building instead of one blob per block. Here 91% of`,
+`      buildings touch another, so without it most of the mask is one object.`,
 `  ${N.maskw}`,
 `  ${N.maskp}`,
 `      Georeferencing for ${N.mask}. Keep all three side by side or a GIS`,
@@ -2889,8 +2937,8 @@ N.csv ? `      provenance. Nothing in it is inferred.`                          
 `  self-consistent with its own world file but drifts against any web basemap,`,
 `  by more the further you are from the equator. If you have an older export`,
 `  that will not line up, that is why. Reproject or re-export.`,
-`  The .prj says EPSG:3857 and the .pgw is in metres, so QGIS and ArcGIS place`,
-`  it correctly with no manual step.`,
+`  The .prj says ${CRS} and the world file is in that CRS's units, so QGIS and`,
+`  ArcGIS place it correctly with no manual step.`,
 ``,
 `WHAT IS IN THE BOX`,
 `  buildings                  ${st.n}`,
@@ -3545,134 +3593,375 @@ function applySrcMode(){
 
 
 /* ================= UPLOAD YOUR OWN IMAGE =================
-   Drop a georeferenced GeoTIFF and it lands on the map at its own coordinates,
-   read with the same geotiff.js already used for the height rasters. The file is
-   opened with FileReader and never leaves the machine — there is no server here
-   to send it to, which is the point.
+   THE POINT OF THIS, STATED PLAINLY. Every accuracy limit this project measured
+   is a limit of OUR imagery: 0.31-0.5 m and +/-8.47 m for nine tenths of Earth,
+   which is one pixel per party wall and eight metres of position. A drone frame
+   at 5 cm is ten times finer than anything we can stream. So user imagery is
+   not a side feature - it is the only route past the physics, and what the app
+   can do with it is give back everything it knows about that exact ground, on
+   that exact pixel grid.
 
-   Once placed, everything the app already does works over its footprint: the
-   area report, block complexity, and the two-colour mask export for exactly the
-   ground the image covers. That is the useful half of "classify my image" and it
-   needs no model at all — the footprints come from the published data, which
-   F57 measured as separating buildings better than the model we trained. */
-let overlayId = null;
+   Three ways in, all of them client-side. The file is read with FileReader and
+   never leaves the machine; there is no server here to send it to.
+
+     GEOREFERENCED GeoTIFF   we know where it is, so we go straight to output
+     PLAIN JPG/PNG           the user places it, then optionally SNAPS it to the
+                             basemap by correlation
+     (later) A MODEL         segment the upload itself - the seam is marked
+
+   WHY AUTOMATIC PLACEMENT IS NOT OFFERED FOR A PLAIN PHOTO. "Where on Earth is
+   this?" is cross-view geo-localisation: a trained model plus a planet-scale
+   reference index. Not browser-feasible, and guessing would be worse than
+   asking. Refining a placement the user has already made IS feasible, and is
+   the same correlation that measured this project's alignment at 0.52 m. */
+let overlay = null;      // {name, bb, W, H, proj, canvas, geo}
+
 function removeOverlay(){
-  if(!overlayId) return;
+  if(!overlay) return;
   if(map.getLayer('up-img')) map.removeLayer('up-img');
   if(map.getSource('upsrc')) map.removeSource('upsrc');
-  overlayId = null;
+  overlay = null;
   const b = document.getElementById('upload');
   if(b){ b.classList.remove('on'); b.textContent = 'Upload image'; }
 }
+function placeOverlay(cv, bb, name, proj, geo){
+  removeOverlay();
+  map.addSource('upsrc', {type:'image', url: cv.toDataURL('image/png'),
+    coordinates: [[bb.w,bb.n],[bb.e,bb.n],[bb.e,bb.s],[bb.w,bb.s]]});
+  map.addLayer({id:'up-img', type:'raster', source:'upsrc',
+    paint:{'raster-opacity':0.95}}, 'ovt-fill');
+  overlay = {name, bb, W:cv.width, H:cv.height, proj, canvas:cv, geo};
+  const b = document.getElementById('upload');
+  if(b){ b.classList.add('on'); b.textContent = 'Remove image'; }
+}
+function moveOverlay(bb){
+  if(!overlay) return;
+  overlay.bb = bb;
+  const src = map.getSource('upsrc');
+  if(src) src.setCoordinates([[bb.w,bb.n],[bb.e,bb.n],[bb.e,bb.s],[bb.w,bb.s]]);
+}
+
+/* ---- SNAP A PLACEMENT TO THE BASEMAP ----
+   Sweeps the overlay against the imagery underneath and keeps the offset where
+   they agree best. Correlation is on GREY INTENSITY, not on edges: measured in
+   this fabric, edge cross-correlation is flat at r ~ 0.04 with no peak, because
+   every roof edge abuts another roof edge. Interior brightness has a sharp one.
+   Refinement only - it cannot find a photograph that is in the wrong city. */
+async function snapOverlay(){
+  if(!overlay) return null;
+  const el = document.getElementById('up-snapnote');
+  const say = t => { if(el) el.innerHTML = t; };
+  say('Comparing with the imagery…');
+  const bb = overlay.bb;
+  const W = Math.min(600, overlay.W), H = Math.round(W * overlay.H / overlay.W);
+  // the upload, greyed and downsampled
+  const uc = document.createElement('canvas'); uc.width=W; uc.height=H;
+  const ux = uc.getContext('2d', {willReadFrequently:true});
+  ux.drawImage(overlay.canvas, 0, 0, W, H);
+  const ud = ux.getImageData(0,0,W,H).data;
+  const up = new Float32Array(W*H);
+  for(let i=0,q=0;i<W*H;i++,q+=4) up[i] = ud[q]*0.299 + ud[q+1]*0.587 + ud[q+2]*0.114;
+  // the basemap over the same ground, from the tiles already in the browser
+  const bx = await basemapPatch(bb, W, H);
+  if(!bx){ say('Could not read the imagery here to compare against.'); return null; }
+  const mean = a => { let t=0; for(const v of a) t+=v; return t/a.length; };
+  const mu = mean(up), mb = mean(bx);
+  let sdu=0, sdb=0;
+  for(let i=0;i<W*H;i++){ sdu+=(up[i]-mu)**2; sdb+=(bx[i]-mb)**2; }
+  sdu=Math.sqrt(sdu/(W*H))||1; sdb=Math.sqrt(sdb/(W*H))||1;
+  /* COARSE THEN FINE. A single fine sweep over a window wide enough to catch a
+     hand placement is O(range^2 x pixels) and too slow, so a narrow window was
+     tried first - and MEASURED, it under-corrected: a deliberate 15.9 m offset
+     came back 12.3 m, because the true peak lay outside the window and the
+     search settled for the best edge it could see. Two passes fix that: a wide
+     sweep on a coarse step to find the neighbourhood, then a tight sweep at
+     single-pixel resolution around it. */
+  const scan = (cx, cy, rad, step) => {
+    let b = null;
+    for(let dy=cy-rad; dy<=cy+rad; dy+=step) for(let dx=cx-rad; dx<=cx+rad; dx+=step){
+      let sum=0, n=0;
+      const y0=Math.max(1,-dy+1), y1=Math.min(H-1, H-dy-1);
+      const x0=Math.max(1,-dx+1), x1=Math.min(W-1, W-dx-1);
+      if(y1-y0 < H*0.4 || x1-x0 < W*0.4) continue;   // too little overlap to judge
+      for(let y=y0; y<y1; y+=2) for(let x=x0; x<x1; x+=2){
+        sum += (up[y*W+x]-mu) * (bx[(y+dy)*W+(x+dx)]-mb); n++;
+      }
+      if(!n) continue;
+      const r = sum/n/(sdu*sdb);
+      if(!b || r > b.r) b = {dx, dy, r};
+    }
+    return b;
+  };
+  const wide = Math.max(8, Math.round(W*0.25));      // a hand placement can be far out
+  let best = scan(0, 0, wide, Math.max(2, Math.round(wide/12)));
+  if(best) best = scan(best.dx, best.dy, Math.max(3, Math.round(wide/10)), 1) || best;
+  if(!best){ say('No usable overlap.'); return null; }
+  const mppx = (bb.e-bb.w)/W, mppy = (bb.n-bb.s)/H;
+  /* SIGN, AND IT WAS BACKWARDS. The peak at (dx,dy) means overlay pixel (x,y)
+     matches BASEMAP pixel (x+dx, y+dy) — so the overlay has to move BY (dx,dy),
+     not against it. Subtracting instead doubled the error exactly: a deliberate
+     10.6 m offset came back 21.4 m, 19.8 -> 40.0, 33.1 -> 66.1, with the
+     correlation itself reading a confident r = 0.89 to 0.98. A high score on a
+     move in the wrong direction is the most convincing kind of wrong. */
+  const shifted = {w:bb.w + best.dx*mppx, e:bb.e + best.dx*mppx,
+                   s:bb.s - best.dy*mppy, n:bb.n - best.dy*mppy};
+  const latm = (bb.n+bb.s)/2;
+  const mx = Math.abs(best.dx*mppx)*Math.cos(latm*Math.PI/180)*111320;
+  const my = Math.abs(best.dy*mppy)*110540;
+  moveOverlay(shifted);
+  say(`Nudged <b>${mx.toFixed(1)} m</b> east-west and <b>${my.toFixed(1)} m</b> `
+    + `north-south, where the two pictures agree best (r = ${best.r.toFixed(2)}). `
+    + `<a href="#" id="up-unsnap" style="color:var(--accent)">undo</a>`);
+  on('up-unsnap','click', e => { e.preventDefault(); moveOverlay(bb); say(''); });
+  return best;
+}
+/* Read the basemap over a bbox by stitching the Wayback tiles directly - the
+   map canvas itself cannot be read back without preserveDrawingBuffer. */
+async function basemapPatch(bb, W, H){
+  const z = Math.min(19, Math.max(12, Math.round(map.getZoom())+1));
+  const n = 2**z;
+  const lon2x = l => (l+180)/360*n;
+  const lat2y = l => { const r=l*Math.PI/180;
+    return (1 - Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n; };
+  const tx0=Math.floor(lon2x(bb.w)), tx1=Math.floor(lon2x(bb.e));
+  const ty0=Math.floor(lat2y(bb.n)), ty1=Math.floor(lat2y(bb.s));
+  if((tx1-tx0+1)*(ty1-ty0+1) > 64) return null;      // too much ground; refuse
+  const TW=(tx1-tx0+1)*256, TH=(ty1-ty0+1)*256;
+  const cv=document.createElement('canvas'); cv.width=TW; cv.height=TH;
+  const cx=cv.getContext('2d',{willReadFrequently:true});
+  const base = sharpFrame ? sharpFrame.url : BASEMAPS[YEARS[yearIdx]];
+  let ok=0;
+  await Promise.all((()=>{ const jobs=[];
+    for(let ty=ty0; ty<=ty1; ty++) for(let tx=tx0; tx<=tx1; tx++){
+      const url = base.replace('{level}',z).replace('{row}',ty).replace('{col}',tx);
+      jobs.push(new Promise(res=>{ const im=new Image(); im.crossOrigin='anonymous';
+        im.onload=()=>{ cx.drawImage(im,(tx-tx0)*256,(ty-ty0)*256); ok++; res(); };
+        im.onerror=()=>res(); im.src=url; }));
+    } return jobs; })());
+  if(!ok) return null;
+  const R=20037508.342789244;
+  const IMx0=(tx0/n)*2*R-R, IMy0=R-(ty0/n)*2*R, mpp=(2*R/n)/256;
+  const px0=Math.round((toMercX(bb.w)-IMx0)/mpp), px1=Math.round((toMercX(bb.e)-IMx0)/mpp);
+  const py0=Math.round((IMy0-toMercY(bb.n))/mpp), py1=Math.round((IMy0-toMercY(bb.s))/mpp);
+  const sw=Math.max(1,px1-px0), sh=Math.max(1,py1-py0);
+  const out=document.createElement('canvas'); out.width=W; out.height=H;
+  const ox=out.getContext('2d',{willReadFrequently:true});
+  ox.drawImage(cv, px0, py0, sw, sh, 0, 0, W, H);
+  const d=ox.getImageData(0,0,W,H).data;
+  const g=new Float32Array(W*H);
+  for(let i=0,q=0;i<W*H;i++,q+=4) g[i]=d[q]*0.299+d[q+1]*0.587+d[q+2]*0.114;
+  return g;
+}
+
+/* ---- everything the app knows about this ground, on the upload's own grid ---- */
+async function exportForOverlay(everything){
+  if(!overlay) return;
+  const bb = overlay.bb;
+  dedupe();
+  const feats = buildingsIn(bb);
+  const st = areaStats(bb, feats);
+  /* THE GRID IS THE UPLOAD'S, NOT OURS. A mask "covering about the same area"
+     is not much use; one at the photograph's exact width, height and projection
+     drops onto it pixel for pixel in any GIS. */
+  const R = renderMasks(bb, feats, {W:overlay.W, H:overlay.H, proj:overlay.proj});
+  st.cover = R.builtFraction;
+  st.overlap = st.bcr > 0 ? Math.max(0, 1 - st.cover / st.bcr) : 0;
+  lastRaster = R; lastStats = st; lastFeats = feats; lastBox = bb;
+  try { lastBC = blockComplexity(bb, feats); } catch(e){ lastBC = null; }
+  await exportArea(bb, feats, st, everything, R);
+}
+
 on('upload','click', ()=>{
-  if(overlayId){ removeOverlay(); return; }
+  if(overlay){ removeOverlay(); const b=document.getElementById('body');
+    if(b) b.innerHTML = '<p class="empty">Image removed.</p>'; return; }
   document.getElementById('tif').click();
 });
+
+function overlayPanel(extra){
+  const bb = overlay.bb;
+  const km2 = areaKm2(bb);
+  const gsdX = (bb.e-bb.w)*Math.cos((bb.n+bb.s)/2*Math.PI/180)*111320/overlay.W;
+  return `<p class="bid">${overlay.name}</p>
+    <span class="chip">${overlay.geo ? 'georeferenced' : 'placed by hand'}</span>
+    <span class="chip">${overlay.W} × ${overlay.H} px</span>
+
+    <div class="grp"><h2>Your image</h2><table>
+      ${fmtRow('Size', `<span class="num">${overlay.W} × ${overlay.H}</span> px`)}
+      ${fmtRow('Ground resolution', `<span class="num">${gsdX.toFixed(3)}</span> m per pixel`,
+        gsdX <= 0.1 ? 'finer than any imagery this app can stream — a model run on this '
+          + 'would resolve walls that satellites cannot'
+        : gsdX <= 0.2 ? 'finer than the 0.31–0.5 m satellite imagery under most of the world'
+        : 'comparable to the satellite imagery this app streams')}
+      ${fmtRow('Extent', `<span class="num">${km2 < 1 ? (km2*100).toFixed(1)+' ha' : km2.toFixed(3)+' km²'}</span>`)}
+      ${fmtRow('Grid', overlay.proj === 'deg' ? 'EPSG:4326 · degrees' : 'EPSG:3857 · Web Mercator')}
+    </table></div>
+
+    ${extra || ''}
+
+    <div class="grp"><h2>What we can give you for this ground</h2>
+      <div class="row" style="margin-bottom:7px">
+        <button id="up-all">Download all</button>
+        <button id="up-mask">Mask only</button>
+      </div>
+      <span class="why">The published footprints for exactly the ground your image
+      covers, rendered at <b>${overlay.W} × ${overlay.H}</b> — your image's own pixel
+      grid and projection — so the mask drops onto your file one pixel to one pixel.
+      Two-colour mask with touching buildings separated, colour instance mask,
+      GeoJSON, statistics CSV and world files.</span>
+    </div>
+
+    <div class="note note-info"><strong>Your file stayed on this machine.</strong>
+    There is no server in this application to upload it to. What comes back is the
+    published data for that ground, not a reading of your picture — segmenting the
+    image itself needs a model, which is the next thing this is built for.</div>`;
+}
+function wireOverlayPanel(){
+  on('up-all','click', ()=>exportForOverlay(true));
+  on('up-mask','click', ()=>exportForOverlay(false));
+  on('up-report','click', e=>{ e.preventDefault();
+    drawBox2(overlay.bb); areaReport(overlay.bb); });
+  on('up-snap','click', e=>{ e.preventDefault(); snapOverlay(); });
+  on('up-fit','click', e=>{ e.preventDefault();
+    const b=map.getBounds();
+    moveOverlay({w:b.getWest(), e:b.getEast(), s:b.getSouth(), n:b.getNorth()});
+    const el=document.getElementById('up-snapnote'); if(el) el.textContent='';
+  });
+}
+
 on('tif','change', async (ev) => {
   const file = ev.target.files && ev.target.files[0];
-  ev.target.value = '';                    // allow re-picking the same file
+  ev.target.value = '';
   if(!file) return;
   const body = document.getElementById('body');
   const say = html => { body.innerHTML = html; };
   say(`<p class="bid">${file.name}</p><p class="empty">Reading…</p>`);
+  const isTiff = /\.tiff?$/i.test(file.name) || /tiff/i.test(file.type || '');
   try{
-    const GT = await loadGeoTIFF();
-    const buf = await file.arrayBuffer();
-    const tif = await GT.fromArrayBuffer(buf);
-    const img = await tif.getImage();
-    const W = img.getWidth(), H = img.getHeight();
-    let bbox;
-    try { bbox = img.getBoundingBox(); }
-    catch(e){ bbox = null; }
-    if(!bbox) throw new Error('this file carries no georeferencing');
-
-    /* A GeoTIFF can be in any projection. Web Mercator metres are detected and
-       converted; degrees pass through; anything else is refused rather than
-       silently drawn in the wrong place, which is the failure that would be
-       hardest for a user to notice. */
-    let [w,s,e,n] = bbox;
-    const looksMetres = Math.abs(w) > 180 || Math.abs(e) > 180 ||
-                        Math.abs(s) > 90  || Math.abs(n) > 90;
-    if(looksMetres){
-      const R = 20037508.342789244;
-      const toLng = x => x*180/R;
-      const toLat = y => (2*Math.atan(Math.exp(y*Math.PI/R)) - Math.PI/2)*180/Math.PI;
-      [w,e] = [toLng(w), toLng(e)]; [s,n] = [toLat(s), toLat(n)];
-    }
-    if(!(isFinite(w)&&isFinite(s)&&isFinite(e)&&isFinite(n)) ||
-       Math.abs(w)>180 || Math.abs(e)>180 || Math.abs(s)>90 || Math.abs(n)>90)
-      throw new Error('the coordinates are not WGS84 or Web Mercator — reproject it first');
-
-    // decode to RGB. Single-band files are shown as greyscale so a mask or a
-    // DEM is still visible rather than failing.
-    const MAXW = 2048, scale = Math.min(1, MAXW/Math.max(W,H));
-    const rw = Math.max(1, Math.round(W*scale)), rh = Math.max(1, Math.round(H*scale));
-    const data = await img.readRasters({width:rw, height:rh});
-    const bands = data.length;
-    const cv = document.createElement('canvas'); cv.width = rw; cv.height = rh;
-    const ctx = cv.getContext('2d');
-    const out = ctx.createImageData(rw, rh);
-    const norm = arr => {
-      let lo = Infinity, hi = -Infinity;
-      for(let i=0;i<arr.length;i+=97){ const v=arr[i];
-        if(v<lo) lo=v; if(v>hi) hi=v; }
-      if(!isFinite(lo)||!isFinite(hi)||hi===lo) return v => v;
-      return v => (v-lo)/(hi-lo)*255;
-    };
-    const f0 = norm(data[0]);
-    for(let i=0;i<rw*rh;i++){
-      const p = i*4;
-      if(bands >= 3){
-        out.data[p]   = data[0][i];
-        out.data[p+1] = data[1][i];
-        out.data[p+2] = data[2][i];
-      } else {
-        const g = f0(data[0][i]);
-        out.data[p] = out.data[p+1] = out.data[p+2] = g;
-      }
-      out.data[p+3] = 255;
-    }
-    ctx.putImageData(out, 0, 0);
-
-    removeOverlay();
-    map.addSource('upsrc', {type:'image', url: cv.toDataURL('image/png'),
-      coordinates: [[w,n],[e,n],[e,s],[w,s]]});
-    map.addLayer({id:'up-img', type:'raster', source:'upsrc',
-      paint:{'raster-opacity':0.95}}, 'ovt-fill');
-    overlayId = file.name;
-    const b = document.getElementById('upload');
-    if(b){ b.classList.add('on'); b.textContent = 'Remove image'; }
-    map.fitBounds([[w,s],[e,n]], {padding:40, duration:800});
-
-    const areaKm2 = (e-w)*Math.cos((n+s)/2*Math.PI/180)*111.320*(n-s)*110.540;
-    say(`<p class="bid">${file.name}</p><span class="chip">placed</span>
-      <div class="grp"><h2>Your image · measured</h2><table>
-        ${fmtRow('Size', `<span class="num">${W} × ${H}</span> px`)}
-        ${fmtRow('Bands', `<span class="num">${bands}</span>`)}
-        ${fmtRow('Ground resolution',
-          `<span class="num">${((e-w)*Math.cos((n+s)/2*Math.PI/180)*111320/W).toFixed(2)}</span> m/px`)}
-        ${fmtRow('Extent', `<span class="num">${areaKm2.toFixed(3)}</span> km²`)}
-        ${fmtRow('Coordinates', looksMetres ? 'Web Mercator → converted' : 'WGS84 degrees')}
-      </table></div>
-      <div class="row" style="margin-top:10px">
-        <button id="up-analyse">Analyse this footprint</button>
-      </div>
-      <div class="note note-info"><strong>Your file stayed on this machine.</strong>
-      There is no server in this application to upload it to. Analysing its footprint
-      measures the published building data for exactly the ground your image covers,
-      so you can compare the two.</div>`);
-    on('up-analyse','click', ()=>{
-      const bb = {w, s, e, n};
-      drawBox2(bb); areaReport(bb);
-    });
+    if(isTiff) await loadGeoTiffFile(file, say);
+    else await loadPlainImage(file, say);
   }catch(err){
     say(`<p class="bid">${file.name}</p>
-      <div class="note note-warn"><strong>Could not place this file.</strong>
-      ${String(err.message || err)}.<br><br>It needs to be a GeoTIFF carrying its own
-      georeferencing, in WGS84 degrees or Web Mercator. A plain PNG or JPEG has no
-      coordinates, so there is no way to know where on Earth it belongs.</div>`);
+      <div class="note note-warn"><strong>Could not read this file.</strong>
+      ${String(err.message || err)}</div>`);
   }
 });
+
+async function loadGeoTiffFile(file, say){
+  const GT = await loadGeoTIFF();
+  const buf = await file.arrayBuffer();
+  const tif = await GT.fromArrayBuffer(buf);
+  const img = await tif.getImage();
+  const W = img.getWidth(), H = img.getHeight();
+  let bbox = null;
+  try { bbox = img.getBoundingBox(); } catch(e){}
+  if(!bbox) throw new Error('this GeoTIFF carries no georeferencing — save it as a plain '
+    + 'image instead and place it on the map by hand');
+  let [w,s,e,n] = bbox;
+  /* A GeoTIFF can be in any projection. Web Mercator metres are detected and
+     converted, degrees pass through, anything else is refused rather than drawn
+     in the wrong place - the failure hardest for a user to notice. */
+  const looksMetres = Math.abs(w) > 180 || Math.abs(e) > 180 ||
+                      Math.abs(s) > 90  || Math.abs(n) > 90;
+  const proj = looksMetres ? 'merc' : 'deg';
+  if(looksMetres){
+    const R = 20037508.342789244;
+    const toLng = x => x*180/R;
+    const toLat = y => (2*Math.atan(Math.exp(y*Math.PI/R)) - Math.PI/2)*180/Math.PI;
+    [w,e] = [toLng(w), toLng(e)]; [s,n] = [toLat(s), toLat(n)];
+  }
+  if(!(isFinite(w)&&isFinite(s)&&isFinite(e)&&isFinite(n)) ||
+     Math.abs(w)>180 || Math.abs(e)>180 || Math.abs(s)>90 || Math.abs(n)>90)
+    throw new Error('the coordinates are not WGS84 or Web Mercator — reproject it first');
+  const cv = await decodeTiff(img, W, H);
+  placeOverlay(cv, {w,s,e,n}, file.name, proj, true);
+  map.fitBounds([[w,s],[e,n]], {padding:40, duration:800});
+  say(overlayPanel(`<div class="note note-info"><strong>Placed from its own
+    georeferencing.</strong> ${proj === 'merc' ? 'Web Mercator, converted to degrees for the map.'
+    : 'WGS84 degrees.'} Nothing was guessed.
+    <a href="#" id="up-snap" style="color:var(--accent)">check it against the imagery</a>
+    if you want to see how well it lines up.</div>
+    <p class="segwhy" id="up-snapnote"></p>
+    <p class="segwhy"><a href="#" id="up-report" style="color:var(--accent)">Measure this
+    footprint</a> — the full area report for the ground your image covers.</p>`));
+  wireOverlayPanel();
+}
+
+async function decodeTiff(img, W, H){
+  const MAXW = 2048, scale = Math.min(1, MAXW/Math.max(W,H));
+  const rw = Math.max(1, Math.round(W*scale)), rh = Math.max(1, Math.round(H*scale));
+  const data = await img.readRasters({width:rw, height:rh});
+  const bands = data.length;
+  const cv = document.createElement('canvas'); cv.width = rw; cv.height = rh;
+  const ctx = cv.getContext('2d');
+  const out = ctx.createImageData(rw, rh);
+  const norm = arr => {
+    let lo = Infinity, hi = -Infinity;
+    for(let i=0;i<arr.length;i+=97){ const v=arr[i]; if(v<lo) lo=v; if(v>hi) hi=v; }
+    if(!isFinite(lo)||!isFinite(hi)||hi===lo) return v => v;
+    return v => (v-lo)/(hi-lo)*255;
+  };
+  const f0 = norm(data[0]);
+  for(let i=0;i<rw*rh;i++){
+    const p = i*4;
+    if(bands >= 3){ out.data[p]=data[0][i]; out.data[p+1]=data[1][i]; out.data[p+2]=data[2][i]; }
+    else { const g=f0(data[0][i]); out.data[p]=out.data[p+1]=out.data[p+2]=g; }
+    out.data[p+3] = 255;
+  }
+  ctx.putImageData(out, 0, 0);
+  return cv;
+}
+
+/* A plain photograph has no coordinates, so the user places it. It lands across
+   the current view - which is why the panel says to move the map to the right
+   place first - and can then be nudged onto the imagery by correlation. */
+async function loadPlainImage(file, say){
+  const url = URL.createObjectURL(file);
+  const im = await new Promise((res, rej) => {
+    const i = new Image(); i.onload = () => res(i);
+    i.onerror = () => rej(new Error('this is not an image the browser can decode'));
+    i.src = url;
+  });
+  const MAXW = 2048, scale = Math.min(1, MAXW/Math.max(im.width, im.height));
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(im.width*scale));
+  cv.height = Math.max(1, Math.round(im.height*scale));
+  cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+  URL.revokeObjectURL(url);
+  // sit it in the middle of the view, keeping its aspect ratio
+  const b = map.getBounds();
+  const cw = (b.getEast()-b.getWest())*0.6, ch = cw * (cv.height/cv.width)
+             * Math.cos(map.getCenter().lat*Math.PI/180);
+  const c = map.getCenter();
+  placeOverlay(cv, {w:c.lng-cw/2, e:c.lng+cw/2, s:c.lat-ch/2, n:c.lat+ch/2},
+               file.name, 'deg', false);
+  say(overlayPanel(`<div class="note note-warn"><strong>This file has no coordinates.</strong>
+    A JPEG or PNG carries no position, and working out where a photograph was taken from the
+    picture alone needs a trained model and a planet-wide reference index — not something a
+    browser can do, and guessing would be worse than asking.
+    <br><br>So: pan and zoom the map to the right place, press
+    <a href="#" id="up-fit" style="color:var(--accent)">fit to this view</a>, then
+    <a href="#" id="up-snap" style="color:var(--accent)">snap it to the imagery</a> —
+    that part <em>is</em> measurable, and it is the same correlation that put this
+    project's alignment at 0.52 m.</div>
+    <p class="segwhy" id="up-snapnote"></p>
+    <p class="segwhy"><a href="#" id="up-report" style="color:var(--accent)">Measure this
+    footprint</a> once it is in the right place.</p>`));
+  wireOverlayPanel();
+}
+
+/* ---- THE SEAM FOR A MODEL ----
+   When weights arrive, this is where they plug in. Everything above already
+   delivers the ground truth side: the published footprints for the upload's
+   exact extent, on its exact grid. A model adds the other side - a reading of
+   the PICTURE - and the two can then be compared directly because they are the
+   same size and the same projection.
+
+   What it needs, and nothing else: an ONNX file, a preprocessing step to tile
+   the canvas in `overlay.canvas`, and a postprocessing step producing an
+   Int32Array of instance ids the size of that canvas. renderMasks(), the seam,
+   the ZIP writer and the world files all take it from there unchanged, because
+   they already work on exactly that: one integer per pixel. Verified available
+   in this browser: WebGPU with a working adapter. */
 
 map.on('load', refresh);
 // applyTheme runs once before the style exists, so on a light-mode machine the label
