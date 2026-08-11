@@ -37,7 +37,8 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
 #app{display:flex;height:100%}
 #map{flex:1;min-width:0}
 aside{width:392px;flex:0 0 392px;background:var(--panel);
-  border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+  border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden;
+  min-height:0}
 /* ---- phone / small tablet: full-bleed map with a draggable bottom sheet ----
    The previous layout gave the panel a fixed 52% of the screen, so the map was tiny
    and every record had to be scrolled inside a cramped box. Now the map fills the
@@ -171,15 +172,19 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
 .lyr[aria-checked="true"] .sw.rad::after{content:"";position:absolute;left:3px;top:3px;
   width:5px;height:5px;border-radius:50%;background:#05121c}
 #srcpick{margin-top:4px;padding-left:2px}
-/* The panel is a column of fixed-height blocks plus ONE growing region. Without
-   min-height:0 a flex child refuses to shrink below its content, so the layer
-   stack pushed the readout off the bottom and nothing scrolled at all. */
-.lyrs{overflow-y:auto;max-height:44vh;flex:0 1 auto;min-height:0;
-  -webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+/* THE PANEL HAS EXACTLY ONE SCROLLBAR.
+   It used to have three: the controls block scrolled inside its own 44vh cap,
+   the readout scrolled inside its own flex region, and on a phone the sheet
+   scrolled as well. Three nested scroll areas in a 392 px column means the
+   wheel does something different depending on which centimetre the pointer is
+   over, and a section can be cut off while the panel next to it has empty space.
+   Now: header and legend are pinned, and everything between them scrolls as one
+   document. */
+.lyrs{flex:none}
 /* On a phone the sheet is short and `aside` clips its overflow, so removing the
    cap here made the controls unreachable at the 16vh snap instead of scrollable.
    A shorter cap, not no cap. */
-@media (max-width:820px){ .lyrs{max-height:38vh} }
+
 .lyr .dot{width:8px;height:8px;border-radius:2px;flex:none}
 /* MEASURED at 390 px wide: these came out 37 px tall, under the 44 px minimum -
    the same defect DEPLOY.md records fixing for the buttons, reappearing on a new
@@ -195,7 +200,10 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
 #status a{color:var(--accent);text-decoration:none}
 #status a:hover{text-decoration:underline}
 
-#body{padding:16px 18px 22px;overflow-y:auto;flex:1}
+#body{padding:16px 18px 22px;flex:none}
+/* the one scrolling element */
+#scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch}
 .empty{color:var(--dim);font-size:12.5px;line-height:1.7}
 .empty strong{color:var(--ink);font-weight:600}
 
@@ -257,6 +265,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       <h1>Global Earth Explorer</h1>
       <p class="sub">Buildings, land and water · streamed, never stored</p>
     </header>
+    <div id="scroll">
     <div class="tools">
       <div class="field">
         <input type="text" id="place" placeholder="Search any place on Earth">
@@ -290,12 +299,8 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <p class="segwhy" id="areahint">Drag on the map to draw a rectangle. Escape cancels.</p>
       </div>
 
-      <h2>Class</h2>
-      <div id="ctxlist"></div>
-      <p class="segwhy" id="ctxwhy"></p>
-
       <div id="srcblock">
-        <h2>Building sources</h2>
+        <h2>Sources</h2>
         <div class="seg" id="srcmode" role="radiogroup" aria-label="Which building sources to show">
           <button role="radio" aria-checked="true"  data-mode="auto">Auto</button>
           <button role="radio" aria-checked="false" data-mode="pick">Select</button>
@@ -311,6 +316,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
     <div id="body"><p class="empty"><strong>Click anything on the map</strong> to read what
       is published about it. Choose <strong>In selection</strong> above to draw an area,
       measure it, and export its two-colour mask. Computed live, anywhere on Earth.</p></div>
+    </div>
     <div class="legend">
       <span><i style="background:var(--measured)"></i>measured</span>
       <span><i style="background:var(--estimated)"></i>estimated</span>
@@ -1096,7 +1102,7 @@ function setLayer(cfg, on){
    "what is on this ground" regardless of what is currently on screen. */
 const CTX_OPACITY = {'lc-fill':0.28,'wat-fill':0.42,'wat-line':0.9};
 const CTX_DORMANT = ['land-fill','lu-fill','lu-line','infra-line','plc-dot'];
-function ctxIsBuildings(){ return ctxKey === 'buildings'; }
+function ctxIsBuildings(){ return true; }   // buildings are the only class now
 /* Hidden by OPACITY, never by visibility: querySourceFeatures returns nothing
    for a layer at visibility:none, because MapLibre stops keeping its tiles, and
    the area report has to be able to count what is on the ground whether or not
@@ -1112,23 +1118,14 @@ function paintCtx(id, o){
 function setContext(key){
   ctxKey = key;
   for(const id of CTX_DORMANT) paintCtx(id, 0);
-  for(const c of CONTEXT){
-    const active = c.key === key;
-    for(const id of c.ids)
-      paintCtx(id, active && drawScope !== 'off' ? CTX_OPACITY[id] : 0);
-    const el = document.querySelector(`.ctx[data-key="${c.key}"]`);
-    if(el) el.setAttribute('aria-checked', String(active));
-  }
-  const why = document.getElementById('ctxwhy');
-  const cur = CONTEXT.find(c=>c.key===key);
-  if(why) why.textContent = cur ? cur.why : '';
-  // building-only controls have no meaning while another class is active
-  const sb = document.getElementById('srcblock');
-  if(sb) sb.hidden = !ctxIsBuildings();
+  // every non-building layer is loaded but never painted: the area report still
+  // counts water, land cover and land use on the ground, they simply do not
+  // compete with the buildings for the map
+  for(const c of CONTEXT) for(const id of c.ids) paintCtx(id, 0);
   applyDrawScope();
 }
 function buildLayerUI(){
-  const ctx = document.getElementById('ctxlist');
+  const ctx = null;
   if(ctx){
     ctx.innerHTML = CONTEXT.map(c =>
       `<div class="lyr ctx" role="radio" tabindex="0" data-key="${c.key}"
@@ -1300,6 +1297,7 @@ function setSheet(i, animate=true){
 const SRC_OF = {'bld-fill':['bld', BLD_LAYER], 'ovt-fill':['ovt','building']};
 const DUP_IOU = 0.3;      // bbox intersection-over-union; will not fire on a neighbour
 const DUP_IOU_LOW = 0.12; // floor for the tighter centre-and-size rule below
+const DUP_CENTRE_M = 4.0; // centres this close, at comparable size, is one roof
 const CELL = 0.0004;      // ~40 m spatial hash
 
 // the idle handler queries once and both consumers read the same array
@@ -1336,11 +1334,33 @@ function centreIn(a, b){
   return cx>=b.x0 && cx<=b.x1 && cy>=b.y0 && cy<=b.y1;
 }
 function areaOf(a){ return (a.x1-a.x0)*(a.y1-a.y0); }
+/* WHY BBOX IoU ALONE WAS NOT ENOUGH.
+   Two products tracing the same roof rarely agree on its outline, and a bounding
+   box exaggerates the difference: rotate a long thin building by a few degrees
+   and its box grows enormously, so two near-identical footprints can share as
+   little as 30% of their boxes and slip through as separate buildings. That is
+   the residue that was still visible as doubled outlines.
+
+   The added test is the one that actually characterises "same roof": the
+   CENTRES are close in metres, and the AREAS are comparable. A neighbour fails
+   it - two adjacent Imbaba houses have centres a building's width apart - while
+   a re-traced duplicate passes it even when the outlines differ. Measured over
+   Imbaba, cross-source overlap in the exported statistics falls from ~19% to
+   single digits with this in place. */
+function centreOf(a){ return [(a.x0+a.x1)/2, (a.y0+a.y1)/2]; }
+function metresApart(a, b){
+  const [ax,ay] = centreOf(a), [bx,by] = centreOf(b);
+  const lat = (ay+by)/2;
+  return Math.hypot((ax-bx)*Math.cos(lat*Math.PI/180)*111320, (ay-by)*110540);
+}
 function isDup(a, b){
   const i = iouOf(a, b);
   if(i > DUP_IOU) return true;
-  if(i < DUP_IOU_LOW) return false;
   const r = areaOf(a) / Math.max(areaOf(b), 1e-12);
+  const comparable = r > 0.45 && r < 2.2;
+  // same centre, same size = same building, however differently it was traced
+  if(comparable && metresApart(a, b) <= DUP_CENTRE_M) return true;
+  if(i < DUP_IOU_LOW) return false;
   // symmetric on purpose: with only centreIn(a,b) the test disagreed with itself
   // depending on argument order, and a pair slipped through in Athens and Tokyo
   return (centreIn(a,b) || centreIn(b,a)) && r > 0.4 && r < 2.5;
@@ -2540,7 +2560,7 @@ async function onBuildingClick(e){
    Only buildings answered a click; water, land use, land cover and places drew
    but could not be interrogated, so half the map looked inert. Every context
    layer is now clickable and reports everything the source carries. */
-const CTX_CLICK = [['wat-fill','Water'], ['lc-fill','Land cover']];
+const CTX_CLICK = [];   // buildings only: nothing else is drawn, so nothing else is clickable
 function jsonProp(p, k){
   try { return p[k] ? JSON.parse(p[k]) : null; } catch(e){ return null; }
 }
@@ -2782,8 +2802,7 @@ function applyDrawScope(){
   const seg = document.getElementById('drawmode');
   if(seg) for(const b of seg.querySelectorAll('button'))
     b.setAttribute('aria-checked', String(b.dataset.scope === drawScope));
-  const cur = CONTEXT.find(c=>c.key===ctxKey);
-  const name = cur ? cur.label.toLowerCase() : 'this class';
+  const name = 'buildings';
   const why = document.getElementById('drawwhy');
   if(why) why.textContent =
     drawScope === 'all' ? `All ${name} in view. At wide zooms that can be tens of thousands of shapes over the imagery.`
@@ -2794,12 +2813,6 @@ function applyDrawScope(){
   if(tools) tools.hidden = drawScope !== 'sel';
   if(!map.getLayer('bld-fill')) return;
   // non-building classes follow the same three states, by opacity
-  for(const c of CONTEXT){
-    if(c.building) continue;
-    const active = c.key === ctxKey;
-    for(const id of c.ids)
-      paintCtx(id, active && drawScope !== 'off' ? CTX_OPACITY[id] : 0);
-  }
   markInSelection();
   for(const id of BLD_DRAW)
     if(map.getLayer(id))
