@@ -1863,6 +1863,9 @@ function buildingsIn(bb){
    Pixel size is derived from the box so a 500 m box and a 5 km box both come
    back at a sensible resolution rather than a fixed grid. */
 const MAX_PX = 4096;
+/* Cut a one-pixel background seam along every shared wall so touching buildings
+   are separable in the mask. See the end of renderMasks(). */
+let SEPARATE_INSTANCES = true;
 /* THE MASK IS RENDERED IN WEB MERCATOR (EPSG:3857), NOT IN DEGREES.
    It used to map longitude and latitude linearly onto x and y, which is plate
    carree. Self-consistent with its own world file, but WRONG against everything
@@ -1910,89 +1913,174 @@ function eachPolygon(f, fn){
   if(g.type === 'Polygon') fn(g.coordinates);
   else if(g.type === 'MultiPolygon') for(const p of g.coordinates) fn(p);
 }
-// distinct, reproducible colour per instance id
+/* distinct, reproducible colour per instance id.
+   Resolved to RGB IN JAVASCRIPT rather than through a canvas fillStyle, because
+   the raster below never touches Canvas2D for geometry and must not depend on
+   a browser round-tripping an hsl() string. */
 function instColor(i){
-  const h = (i * 137.508) % 360, s = 62 + (i % 3) * 9, l = 46 + (i % 5) * 6;
-  return `hsl(${h} ${s}% ${l}%)`;
+  const h = ((i * 137.508) % 360) / 360;
+  const sat = (62 + (i % 3) * 9) / 100;
+  const lig = (46 + (i % 5) * 6) / 100;
+  const q = lig < 0.5 ? lig * (1 + sat) : lig + sat - lig * sat;
+  const p2 = 2 * lig - q;
+  const hue = t => {
+    if(t < 0) t += 1; if(t > 1) t -= 1;
+    if(t < 1/6) return p2 + (q - p2) * 6 * t;
+    if(t < 1/2) return q;
+    if(t < 2/3) return p2 + (q - p2) * (2/3 - t) * 6;
+    return p2;
+  };
+  return [Math.round(hue(h + 1/3) * 255),
+          Math.round(hue(h) * 255),
+          Math.round(hue(h - 1/3) * 255)];
+}
+
+/* ================= THE RASTER IS SCANLINE-FILLED, NOT DRAWN =================
+   WHY THIS IS NOT Canvas2D ANY MORE. The masks used to be painted with
+   ctx.fill(), which antialiases every edge and offers no flag to stop it. That
+   left ~20,000 grey pixels in a mask asked for as TWO COLOURS, and 3,228
+   distinct colours in an instance raster holding 476 buildings. The repair was
+   to threshold afterwards and snap each instance pixel to the nearest palette
+   colour.
+
+   THAT REPAIR WAS WRONG, and it only became visible once the instances had to
+   be separated. Snapping by nearest RGB assigns a blended edge pixel to
+   whichever palette entry happens to be closest in colour space - frequently a
+   THIRD building that is nowhere near it on the map. So the recovered instance
+   map was speckled along every boundary, and cutting a seam wherever two ids
+   meet cut through the speckle as well: MEASURED, 7,777 connected components
+   for 751 buildings, about ten fragments each, where the correct answer is one.
+
+   A scanline fill has no antialiasing to undo. Every pixel centre is inside
+   exactly one polygon or none, so the instance id is exact by construction,
+   the binary mask is exactly two colours by construction, and the seam falls
+   only where two buildings genuinely meet. Even-odd across all the rings of a
+   polygon at once, so courtyards punch holes for free. */
+function fillRings(rings, id, own, W, H, PX, PY){
+  const ex = [];
+  let ymin = Infinity, ymax = -Infinity;
+  for(const ring of rings){
+    const nR = ring.length;
+    for(let i=0;i<nR;i++){
+      const a = ring[i], b = ring[(i+1) % nR];
+      const ay = PY(a[1]), by = PY(b[1]);
+      if(ay === by) continue;                 // horizontal edges never cross a scanline
+      ex.push(PX(a[0]), ay, PX(b[0]), by);
+      if(ay < ymin) ymin = ay; if(ay > ymax) ymax = ay;
+      if(by < ymin) ymin = by; if(by > ymax) ymax = by;
+    }
+  }
+  if(!ex.length) return;
+  let y0 = Math.ceil(ymin - 0.5), y1 = Math.floor(ymax - 0.5);
+  if(y0 < 0) y0 = 0; if(y1 > H-1) y1 = H-1;
+  const xs = [];
+  for(let y = y0; y <= y1; y++){
+    const sy = y + 0.5;
+    xs.length = 0;
+    for(let e = 0; e < ex.length; e += 4){
+      const ay = ex[e+1], by = ex[e+3];
+      // half-open in y: a vertex shared by two edges is counted once, so a
+      // scanline through a corner does not produce a doubled crossing
+      if((ay <= sy && by > sy) || (by <= sy && ay > sy))
+        xs.push(ex[e] + (sy - ay) / (by - ay) * (ex[e+2] - ex[e]));
+    }
+    if(xs.length < 2) continue;
+    xs.sort((a,b) => a-b);
+    const row = y * W;
+    for(let i = 0; i + 1 < xs.length; i += 2){
+      let xa = Math.ceil(xs[i] - 0.5), xb = Math.floor(xs[i+1] - 0.5);
+      if(xa < 0) xa = 0; if(xb > W-1) xb = W-1;
+      for(let x = xa; x <= xb; x++) own[row + x] = id;
+    }
+  }
 }
 function renderMasks(bb, feats){
   const {W, H, gsd, merc:M} = rasterGrid(bb);
-  const mk = () => { const c = document.createElement('canvas'); c.width=W; c.height=H; return c; };
-  const binC = mk(), instC = mk();
-  const b = binC.getContext('2d'), n = instC.getContext('2d');
-  b.fillStyle = '#000'; b.fillRect(0,0,W,H);
-  n.fillStyle = '#000'; n.fillRect(0,0,W,H);
-  // group tile-split pieces so one building gets ONE colour (F59: 7.6% of
-  // polygons arrive clipped at a tile edge and 4.7% share an id across tiles)
-  const idx = partsIndex(feats);
+  const PX = lng => (toMercX(lng) - M.x0) / (M.x1 - M.x0) * W;
+  const PY = lat => (M.y1 - toMercY(lat)) / (M.y1 - M.y0) * H;
+  // one Int32 per pixel: 0 background, otherwise the 1-based instance number
+  const own = new Int32Array(W*H);
+  // group tile-split pieces so one building gets ONE id (F59: 7.6% of polygons
+  // arrive clipped at a tile edge and 4.7% share an id across tiles)
   let k = 0; const order = new Map();
   for(const f of feats){
     const id = featKey(f);
     if(id != null && !order.has(id)) order.set(id, ++k);
     const ci = id != null ? order.get(id) : ++k;
-    b.fillStyle = '#fff';
-    n.fillStyle = instColor(ci);
-    eachPolygon(f, rings => {
-      for(const ctx of [b, n]){
-        ctx.beginPath();
-        for(const ring of rings){
-          for(let i=0;i<ring.length;i++){
-            const [lng,lat] = ring[i];
-            const x = (toMercX(lng) - M.x0) / (M.x1 - M.x0) * W;
-            const y = (M.y1 - toMercY(lat)) / (M.y1 - M.y0) * H;
-            if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-          }
-          ctx.closePath();
-        }
-        ctx.fill('evenodd');     // inner rings punch holes rather than filling
-      }
-    });
+    eachPolygon(f, rings => fillRings(rings, ci, own, W, H, PX, PY));
   }
 
-  /* ---- HARDEN THE EDGES ----
-     MEASURED: straight off the canvas the "two-colour" mask had 20,816
-     antialiased grey pixels out of 440k, and the instance mask carried 3,228
-     distinct colours for 476 buildings — Canvas2D antialiases every path fill
-     and there is no flag to turn that off. A mask asked for as TWO COLOURS that
-     ships with a grey fringe is wrong, and blended edge colours would break any
-     downstream "select all pixels of building N".
+  /* ---- SEPARATE THE INSTANCES ----
+     A binary mask is a UNION, so two buildings sharing a wall fuse into one
+     white blob and the boundary between them is gone. Here 91% of buildings
+     touch another one, so that is most of the map: the deliverable said "this
+     is built ground" when what was asked for was "this is each building".
 
-     So both rasters are thresholded after drawing: the binary snaps to pure
-     0/255, and every instance pixel snaps to the nearest colour actually used,
-     with the binary acting as the stencil so the two rasters agree exactly. */
-  const bd = b.getImageData(0,0,W,H), bp = bd.data;
-  const nd = n.getImageData(0,0,W,H), np_ = nd.data;
-  const pal = [];
-  for(let i=1;i<=k;i++){
-    n.fillStyle = instColor(i); const m = /rgb\((\d+), (\d+), (\d+)\)/.exec(n.fillStyle) ;
-    if(m) pal.push([+m[1],+m[2],+m[3]]);
-    else { // fillStyle may echo back hsl(); resolve it through a 1px scratch canvas
-      const s = document.createElement('canvas'); s.width=s.height=1;
-      const sc = s.getContext('2d'); sc.fillStyle = instColor(i); sc.fillRect(0,0,1,1);
-      const q = sc.getImageData(0,0,1,1).data; pal.push([q[0],q[1],q[2]]);
-    }
-  }
+     Every pixel with a neighbour belonging to a DIFFERENT building is cut back
+     to background, leaving a black seam along every shared wall. This is the
+     boundary-aware formulation used for building-segmentation ground truth.
+
+     ONE-SIDED, AND 8-CONNECTED. Cutting both sides of every wall cost 18.7% of
+     the built pixels - a 100 m2 house is about 400 px at 0.5 m and its
+     perimeter is 80 of them, taken twice. Cutting only the pixel whose owner
+     has the higher id leaves a one-pixel seam instead of two. The
+     neighbourhood is 8 rather than 4 on purpose: under a 4-neighbour test two
+     buildings meeting at a corner stay diagonally connected, so a flood fill
+     walks from one into the next and the separation is not actually there.
+
+     The seam is cut AFTER `built` is counted. Coverage is a statement about
+     ground under a building and must not move because the mask drew a line;
+     the seam is reported as its own figure. */
   let built = 0;
-  for(let p=0;p<bp.length;p+=4){
-    const on = bp[p] >= 128;
-    bp[p] = bp[p+1] = bp[p+2] = on ? 255 : 0; bp[p+3] = 255;
-    if(on){
-      built++;
-      let bi = 0, bdist = Infinity;
-      const r0 = np_[p], g0 = np_[p+1], b0 = np_[p+2];
-      for(let q=0;q<pal.length;q++){
-        const dr = pal[q][0]-r0, dg = pal[q][1]-g0, db = pal[q][2]-b0;
-        const dd = dr*dr + dg*dg + db*db;
-        if(dd < bdist){ bdist = dd; bi = q; }
+  for(let i=0;i<W*H;i++) if(own[i]) built++;
+  let seam = 0;
+  if(SEPARATE_INSTANCES && k > 1){
+    const cut = new Uint8Array(W*H);
+    for(let y=0;y<H;y++){
+      const row = y*W;
+      for(let x=0;x<W;x++){
+        const i = row+x, o = own[i];
+        if(!o) continue;
+        let hit = 0;
+        for(let dy=-1; dy<=1 && !hit; dy++){
+          const yy = y+dy; if(yy<0 || yy>=H) continue;
+          const r2 = yy*W;
+          for(let dx=-1; dx<=1; dx++){
+            if(!dx && !dy) continue;
+            const xx = x+dx; if(xx<0 || xx>=W) continue;
+            const q = own[r2+xx];
+            if(q && q < o){ hit = 1; break; }
+          }
+        }
+        if(hit){ cut[i] = 1; seam++; }
       }
-      np_[p] = pal[bi][0]; np_[p+1] = pal[bi][1]; np_[p+2] = pal[bi][2];
-    } else { np_[p] = np_[p+1] = np_[p+2] = 0; }
-    np_[p+3] = 255;
+    }
+    for(let i=0;i<W*H;i++) if(cut[i]) own[i] = 0;
+  }
+
+  // paint both rasters straight out of `own` - no drawing, so no antialiasing
+  const pal = []; for(let i=1;i<=k;i++) pal.push(instColor(i));
+  const mk = () => { const c = document.createElement('canvas'); c.width=W; c.height=H; return c; };
+  const binC = mk(), instC = mk();
+  const b = binC.getContext('2d'), n = instC.getContext('2d');
+  const bd = b.createImageData(W,H), nd = n.createImageData(W,H);
+  const bp = bd.data, np_ = nd.data;
+  for(let i=0, p=0; i<W*H; i++, p+=4){
+    const o = own[i];
+    if(o){
+      bp[p] = bp[p+1] = bp[p+2] = 255;
+      const c = pal[o-1] || [255,255,255];
+      np_[p] = c[0]; np_[p+1] = c[1]; np_[p+2] = c[2];
+    } else {
+      bp[p] = bp[p+1] = bp[p+2] = 0;
+      np_[p] = np_[p+1] = np_[p+2] = 0;
+    }
+    bp[p+3] = np_[p+3] = 255;
   }
   b.putImageData(bd,0,0); n.putImageData(nd,0,0);
   // coverage measured from the UNION of pixels, which is the only honest figure:
   // summing polygon areas double-counts wherever two sources drew the same roof
-  return {binC, instC, W, H, gsd, nInst: k, builtFraction: built/(W*H)};
+  return {binC, instC, W, H, gsd, nInst: k, builtFraction: built/(W*H), seam};
 }
 
 /* ---------- georeferencing sidecars ----------
@@ -2909,13 +2997,31 @@ async function onBuildingClick(e){
         the largest piece — a tile cut is not a real wall.</span></td></tr>`:''}
     </table></div>
 
-    <div class="grp"><h2>Height &amp; occupancy · estimated</h2><table id="tbl">
-      <tr id="hrow"><td class="k">Height 2023</td><td class="v"><span class="skel"></span></td></tr>
-      <tr id="hrow0"><td class="k">Height 2020</td><td class="v"><span class="skel"></span></td></tr>
-      <tr id="flr"><td class="k">Floors</td><td class="v"><span class="skel"></span></td></tr>
-      ${p.num_floors?`<tr><td class="k">Floors (recorded)</td><td class="v"><span class="num">${p.num_floors}</span></td></tr>`:''}
-      ${p.height?`<tr><td class="k">Height (recorded)</td><td class="v"><span class="num">${p.height}</span> m</td></tr>`:''}
-    </table></div>
+    ${(p.height || p.num_floors) ? `<div class="grp"><h2>This building · as published</h2><table>
+      ${p.height?`<tr><td class="k">Height</td><td class="v"><span class="num">${p.height}</span> m
+        <span class="why">recorded for this building by its source — the only height here
+        that is about this roof</span></td></tr>`:''}
+      ${p.num_floors?`<tr><td class="k">Floors</td><td class="v"><span class="num">${p.num_floors}</span>
+        <span class="why">recorded for this building by its source</span></td></tr>`:''}
+    </table></div>` : ''}
+
+    <!-- ⚠️ THIS BLOCK IS NOT ABOUT THIS BUILDING, AND THE HEADING NOW SAYS SO.
+         The height raster is a ~76 m grid. At an Imbaba median footprint of
+         about 105 m² and 60% built coverage, ONE CELL SPANS ROUGHLY FIFTY
+         BUILDINGS, and every one of them reads the same number. It was headed
+         "Height & occupancy" inside a panel titled with a building id, with a
+         "Floors" row computed from it — three invitations to read a
+         neighbourhood average as a fact about the roof under the cursor.
+         The caveat was in small print at the end. It is the heading now. -->
+    <div class="grp"><h2>The block around it · estimated, not measured</h2><table id="tbl">
+      <tr id="cellrow"><td class="k">One height cell covers</td><td class="v"><span class="skel"></span></td></tr>
+      <tr id="hrow"><td class="k">Block height 2023</td><td class="v"><span class="skel"></span></td></tr>
+      <tr id="hrow0"><td class="k">Block height 2020</td><td class="v"><span class="skel"></span></td></tr>
+      <tr id="flr"><td class="k">Typical floors in the block</td><td class="v"><span class="skel"></span></td></tr>
+    </table>
+    <div class="note note-warn"><strong>Every building in the same 76 m cell shows these
+    same numbers.</strong> They describe the neighbourhood, not this roof. Use them for the
+    block; do not quote them for a building.</div></div>
 
     <div class="grp"><h2>Location &amp; provenance</h2><table>
       <tr><td class="k">Longitude</td><td class="v"><span class="num">${c[0].toFixed(6)}</span></td></tr>
@@ -2931,16 +3037,41 @@ async function onBuildingClick(e){
     const el=document.getElementById(r); if(!el) return;
     el.children[1].innerHTML = v==null
       ? `<span class="na">not available</span><span class="why">${why}</span>`
-      : `${v.height.toFixed(1)} m <span class="tag t-est">est</span>
+      : `${v.height.toFixed(1)} m <span class="tag t-est">block</span>
          <span class="why">~76 m grid · ${v.gated
              ? `median of ${v.n} built-up cells`
              : `<span style="color:var(--estimated)">only sparse cells (${v.n}) — unreliable</span>`}
-           · local built fraction ${(v.density*100).toFixed(0)}%<br>
-           Describes the block, not this roof. Against finer data over a test city
-           this source read about 2 m low.</span>`;
+           · local built fraction ${(v.density*100).toFixed(0)}%.
+           Against finer data over a test city this source read about 2 m low.</span>`;
   };
   cell('hrow',h23,'no height raster covers this point');
   cell('hrow0',h20,'no height raster covers this point');
+  /* How many buildings share this one number? Computed from what is actually on
+     screen rather than asserted, because it is the whole point: a figure shared
+     by fifty buildings is a figure about fifty buildings. */
+  (function(){
+    const el = document.getElementById('cellrow'); if(!el) return;
+    let n = null;
+    try{
+      const near = map.queryRenderedFeatures({layers:BLD_LAYERS.filter(l=>map.getLayer(l))})
+                      .filter(notDup);
+      const idx = partsIndex(near); const seen = new Set(); const areas = [];
+      for(const q of near){ const id = featKey(q);
+        if(id != null){ if(seen.has(id)) continue; seen.add(id); }
+        const g = geomStatsWhole(q, near, idx); if(g) areas.push(g.area); }
+      if(areas.length){
+        areas.sort((a,b)=>a-b);
+        const med = areas[Math.floor(areas.length/2)];
+        const dens = (h23 && isFinite(h23.density)) ? h23.density : 0.5;
+        if(med > 0) n = Math.max(1, Math.round(76*76*dens/med));
+      }
+    }catch(e){}
+    el.children[1].innerHTML = n == null
+      ? `<span class="na">—</span>`
+      : `about <span class="num">${n}</span> building${n===1?'':'s'}
+         <span class="why">76 × 76 m at the local built fraction and this area's median
+         footprint. All of them read the same height.</span>`;
+  })();
   (async ()=>{
     const all = map.queryRenderedFeatures({layers:BLD_LAYERS.filter(l=>map.getLayer(l))})
                    .filter(notDup);
@@ -3141,10 +3272,14 @@ function showAbout(){
         compactness, touching neighbours, counts, density, coverage, block complexity
         <span class="why">All computed here, in your browser, from the streamed
         geometry. Nothing is inferred.</span></td></tr>
-      <tr><td class="k">Estimated</td><td class="v">height, floors, population
-        <span class="why">Height is a ~76 m cell average, floors are derived from it,
-        and population is an allocation of a total you supply — never a headcount.
-        Each is labelled where it appears.</span></td></tr>
+      <tr><td class="k">Estimated</td><td class="v">block height, floors, population
+        <span class="why">The height raster is a <b>~76 m grid</b> — at this density one
+        cell spans roughly <b>fifty</b> Imbaba buildings, and every one of them reads the
+        same number. It is a block figure and the panel now says so in the heading rather
+        than the footnote. Floors are derived from it, so they inherit the same scope.
+        Population is an allocation of a total you supply — never a headcount. A height or
+        floor count <em>recorded by the source for a specific building</em> is shown
+        separately, and is the only one that describes that roof.</span></td></tr>
       <tr><td class="k">Precision</td><td class="v">about a third of a metre
         <span class="why">Geometry is read from vector tiles and simplified for the
         zoom it was read at. Good enough to count and measure buildings; not survey
