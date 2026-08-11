@@ -307,10 +307,16 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         </div>
         <div id="srcpick" hidden></div>
         <p class="segwhy" id="srcwhy"></p>
+        <div class="yr" style="margin-top:9px">
+          <label for="conf">Min confidence</label>
+          <input type="range" id="conf" min="0" max="90" value="0" step="5">
+          <output id="confv">off</output>
+        </div>
+        <p class="segwhy">Google publishes a confidence per building. F37 measured
+          filtering on it as the biggest single accuracy gain this project found.
+          Raising it drops uncertain outlines — and takes real buildings with them.</p>
       </div>
 
-      <h2>Labels</h2>
-      <div id="lyrlist"></div>
     </div>
     <div id="status">Loading…</div>
     <div id="body"><p class="empty"><strong>Click anything on the map</strong> to read what
@@ -553,6 +559,16 @@ const isCls  = v => ['match', ['get','class'],   v, true, false];
    filtered out: setFilter forces MapLibre to re-parse the whole source on every
    pan, feature-state does not. */
 const dupCase = v => ['case', ['boolean', ['feature-state','dup'], false], 0, v];
+/* ACCURACY LEVER. Google Open Buildings ships a per-building confidence and F37
+   measured filtering on it as the biggest single accuracy win this project
+   found - 34.2% to ~48% on the consensus reference. It is exposed rather than
+   hard-coded because it is a TRADE: every step up drops uncertain outlines and
+   takes real buildings with them. Features with no confidence field, which is
+   most of Overture, are always kept - filtering them out would silently delete
+   a whole source. */
+let minConf = 0;
+const confFilter = () => minConf <= 0 ? null
+  : ['any', ['!', ['has','confidence']], ['>=', ['to-number',['get','confidence'], 0], minConf]];
 
 /* ---------- land palettes ----------
    These fills sit OVER satellite imagery, so the colours are chosen to read
@@ -1001,6 +1017,13 @@ function applyTheme(){
 on('theme','click',()=>{ dark=!dark; applyTheme(); });
 applyTheme();
 on('area','click',()=>setDrawMode(!drawing));
+on('conf','input', e => {
+  minConf = (+e.target.value)/100;
+  const o = document.getElementById('confv');
+  if(o) o.textContent = minConf <= 0 ? 'off' : minConf.toFixed(2);
+  for(const id of BLD_DRAW) if(map.getLayer(id)) map.setFilter(id, confFilter());
+  refresh();
+});
 on('areaclear','click',()=>clearSelection());
 function clearSelection(){
   boxA = boxB = null; lastBox = null; lastFeats = null; lastRaster = null; lastBC = null;
@@ -1142,7 +1165,8 @@ function buildLayerUI(){
       });
     }
   }
-  const host = document.getElementById('lyrlist'); if(!host) return;
+  const host = document.getElementById('lyrlist');
+  if(!host) return;   // the Labels control was removed; road and place names stay on
   host.innerHTML = LAYERS.map(c =>
     `<div class="lyr" role="button" tabindex="0" data-key="${c.key}"
           aria-pressed="${c.on}" aria-label="${c.label} layer">
@@ -1749,6 +1773,78 @@ function worldFile(bb, W, H){
 const PRJ_WGS84 = 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],'
   + 'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]';
 
+/* ================= ZIP =================
+   Eight separate downloads is not a deliverable — the browser scatters them,
+   some get blocked as "multiple downloads", and there is no way to tell which
+   world file belongs to which image. One archive fixes all of that.
+
+   Written by hand because a strict CSP means no library can be loaded, and
+   because it is small: entries are STORED, not deflated. PNGs are already
+   compressed and the text files are tiny, so deflate would buy almost nothing
+   and cost a compressor. This is the standard ZIP layout — local header per
+   file, then a central directory, then the end-of-central-directory record. */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for(let i=0;i<256;i++){ let c=i;
+    for(let k=0;k<8;k++) c = c & 1 ? 0xEDB88320 ^ (c>>>1) : c>>>1;
+    t[i]=c>>>0; }
+  return t;
+})();
+function crc32(u8){
+  let c = 0xFFFFFFFF;
+  for(let i=0;i<u8.length;i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c>>>8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function dosTime(d){
+  return {t: ((d.getHours()<<11) | (d.getMinutes()<<5) | (d.getSeconds()/2)) & 0xFFFF,
+          d: (((d.getFullYear()-1980)<<9) | ((d.getMonth()+1)<<5) | d.getDate()) & 0xFFFF};
+}
+async function makeZip(files){
+  const enc = new TextEncoder(), now = dosTime(new Date());
+  const parts = [], central = [];
+  let offset = 0;
+  for(const f of files){
+    const nameBytes = enc.encode(f.name);
+    const data = f.blob ? new Uint8Array(await f.blob.arrayBuffer())
+                        : (typeof f.text === 'string' ? enc.encode(f.text) : f.bytes);
+    const crc = crc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true);       // local file header
+    lh.setUint16(4, 20, true);               // version needed
+    lh.setUint16(6, 0, true);                // flags
+    lh.setUint16(8, 0, true);                // method 0 = stored
+    lh.setUint16(10, now.t, true); lh.setUint16(12, now.d, true);
+    lh.setUint32(14, crc, true);
+    lh.setUint32(18, data.length, true);     // compressed == uncompressed
+    lh.setUint32(22, data.length, true);
+    lh.setUint16(26, nameBytes.length, true);
+    lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), nameBytes, data);
+    const cd = new DataView(new ArrayBuffer(46));
+    cd.setUint32(0, 0x02014b50, true);
+    cd.setUint16(4, 20, true); cd.setUint16(6, 20, true);
+    cd.setUint16(8, 0, true);  cd.setUint16(10, 0, true);
+    cd.setUint16(12, now.t, true); cd.setUint16(14, now.d, true);
+    cd.setUint32(16, crc, true);
+    cd.setUint32(20, data.length, true); cd.setUint32(24, data.length, true);
+    cd.setUint16(28, nameBytes.length, true);
+    cd.setUint16(30, 0, true); cd.setUint16(32, 0, true);
+    cd.setUint16(34, 0, true); cd.setUint16(36, 0, true);
+    cd.setUint32(38, 0, true);
+    cd.setUint32(42, offset, true);
+    central.push(new Uint8Array(cd.buffer), nameBytes);
+    offset += 30 + nameBytes.length + data.length;
+  }
+  const cdSize = central.reduce((a,b)=>a+b.length, 0);
+  const eocd = new DataView(new ArrayBuffer(22));
+  eocd.setUint32(0, 0x06054b50, true);
+  eocd.setUint16(8, files.length, true); eocd.setUint16(10, files.length, true);
+  eocd.setUint32(12, cdSize, true); eocd.setUint32(16, offset, true);
+  eocd.setUint16(20, 0, true);
+  return new Blob([...parts, ...central, new Uint8Array(eocd.buffer)],
+                  {type:'application/zip'});
+}
+
 function dl(name, blob){
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name;
@@ -2184,12 +2280,7 @@ function areaReport(bb){
   catch(e){ console.warn('block complexity failed', e); }   // never kill the report
   lastBC = bc;
   const kv = kVerdict(bc && bc.medianBlockK);
-  const lb = landBreakdown(bb);
   const num = v => v==null ? '—' : (v>=100 ? v.toFixed(0) : v.toFixed(2));
-  const lbHtml = obj => {
-    const e = Object.entries(obj).sort((a,b)=>b[1]-a[1]);
-    return e.length ? e.map(([k,v])=>`${k} <b>${v}</b>`).join(' · ') : '<span class="na">none in view</span>';
-  };
   if(typeof isPhone === 'function' && isPhone() && snapIdx === 0) setSheet(1);
   body.innerHTML = `
     <p class="bid">Selected area</p>
@@ -2240,17 +2331,6 @@ function areaReport(bb){
     are missing from the source — common in exactly this kind of fabric — k reads
     too high and the fronting share too low.</div></div>` : ''}
 
-    <div class="grp"><h2>Land · from Overture</h2><table>
-      ${fmtRow('Land use', lbHtml(lb.land_use))}
-      ${fmtRow('Land cover', lbHtml(lb.land_cover))}
-      ${fmtRow('Natural land', lbHtml(lb.land))}
-      ${fmtRow('Water', lbHtml(lb.water))}
-      ${fmtRow('Infrastructure', lbHtml(lb.infrastructure))}
-    </table>
-    <span class="why">Counts of features intersecting the box, not area shares.
-    Read from the source, so these are correct whether or not the layer is being
-    drawn. Pick one under Context to see it on the map.</span></div>
-
     <div class="grp"><h2>Export</h2>
       <div class="row" style="margin-bottom:7px">
         <button id="ex-all">Download all</button>
@@ -2278,35 +2358,55 @@ async function exportArea(bb, feats, st, everything){
   const was = btn ? btn.textContent : '';
   if(btn){ btn.textContent = 'Preparing…'; btn.disabled = true; }
   try{
-    // reuse the raster the report already built rather than drawing it twice
     const {binC, instC, W, H, gsd, nInst} = lastRaster || renderMasks(bb, feats);
     const stamp = `${bb.s.toFixed(4)}_${bb.w.toFixed(4)}`;
-    dl(`mask_${stamp}.png`, await canvasBlob(binC));
-    dl(`mask_${stamp}.pgw`, new Blob([worldFile(bb,W,H)], {type:'text/plain'}));
+    const wf = worldFile(bb, W, H);
+    const files = [
+      {name:`mask.png`,  blob: await canvasBlob(binC)},
+      {name:`mask.pgw`,  text: wf},
+      {name:`mask.prj`,  text: PRJ_WGS84},
+    ];
     if(everything){
-      dl(`instances_${stamp}.png`, await canvasBlob(instC));
-      dl(`instances_${stamp}.pgw`, new Blob([worldFile(bb,W,H)], {type:'text/plain'}));
-      dl(`mask_${stamp}.prj`, new Blob([PRJ_WGS84], {type:'text/plain'}));
-      exportVisible(feats, `buildings_${stamp}.geojson`);
-      // every OTHER class on this ground, as vectors and as a matching raster
       const cls = classFeaturesIn(bb);
-      const cg = classesGeoJSON(bb, cls);
-      if(cg.features.length)
-        dl(`classes_${stamp}.geojson`,
-           new Blob([JSON.stringify(cg)], {type:'application/geo+json'}));
-      const CM = renderClassMask(bb, cls);
-      dl(`classes_${stamp}.png`, await canvasBlob(CM.cv));
-      dl(`classes_${stamp}.pgw`, new Blob([worldFile(bb,CM.W,CM.H)], {type:'text/plain'}));
-      dl(`stats_${stamp}.csv`, new Blob([statsCSV(bb, st, W, H, gsd, nInst, cls)], {type:'text/csv'}));
-      dl(`README_${stamp}.txt`, new Blob([manifest(bb, st, W, H, gsd, nInst, cls, stamp)],
-         {type:'text/plain'}));
+      files.push(
+        {name:`instances.png`, blob: await canvasBlob(instC)},
+        {name:`instances.pgw`, text: wf},
+        {name:`instances.prj`, text: PRJ_WGS84},
+        {name:`buildings.geojson`, text: JSON.stringify(buildingsGeoJSON(feats))},
+        {name:`statistics.csv`, text: statsCSV(bb, st, W, H, gsd, nInst, cls)},
+        {name:`README.txt`, text: manifest(bb, st, W, H, gsd, nInst, cls, stamp)}
+      );
     }
+    // ONE file. Eight separate downloads got scattered by the browser, some were
+    // blocked as "multiple downloads", and nothing said which world file belonged
+    // to which image.
+    dl(`imbaba_area_${stamp}.zip`, await makeZip(files));
   }catch(err){
-    if(btn) btn.textContent = 'Export failed';
+    if(btn){ btn.textContent = 'Export failed'; btn.disabled = false; }
     console.error(err);
     return;
   }
   if(btn){ btn.textContent = was; btn.disabled = false; }
+}
+function buildingsGeoJSON(feats){
+  const idx = partsIndex(feats), seen = new Set(), out = [];
+  for(const f of feats){
+    const id = featKey(f);
+    if(id != null){ if(seen.has(id)) continue; seen.add(id); }
+    const g = geomStatsWhole(f, feats, idx), c = centroid(f), p = f.properties;
+    let ds = p.bf_source || p['@geometry_source'] || 'unknown';
+    try{ const s0 = JSON.parse(p.sources||'[]'); if(s0.length) ds = s0[0].dataset; }catch(_){}
+    out.push({type:'Feature', geometry:f.geometry, properties:{
+      id: p.id || id, source: ds,
+      confidence: p.confidence ? +(+p.confidence).toFixed(3) : null,
+      area_m2: g ? +g.area.toFixed(1) : null,
+      perimeter_m: g ? +g.perim.toFixed(1) : null,
+      compactness: g ? +g.compact.toFixed(3) : null,
+      tile_pieces: g ? g.parts : null,
+      lon: c ? +c[0].toFixed(6) : null, lat: c ? +c[1].toFixed(6) : null
+    }});
+  }
+  return {type:'FeatureCollection', features:out};
 }
 function statsCSV(bb, st, W, H, gsd, nInst, cls){
   const BC = lastBC;
