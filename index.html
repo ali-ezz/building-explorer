@@ -350,12 +350,14 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <p class="segwhy" id="srcwhy"></p>
         <div class="yr" style="margin-top:9px">
           <label for="conf">Min confidence</label>
-          <input type="range" id="conf" min="0" max="90" value="0" step="5">
+          <input type="range" id="conf" min="60" max="95" value="60" step="5">
           <output id="confv">off</output>
         </div>
-        <p class="segwhy">Google publishes a confidence score per building. Filtering on
-          it is the single largest accuracy gain measured on this project. Raise it and
-          uncertain outlines go — along with some real buildings.</p>
+        <p class="segwhy">Google scores every building it draws, from <b>0.65</b> to
+          <b>1.0</b> — nothing exists below 0.65, so the slider starts there. Raising it
+          drops uncertain outlines, and takes some real buildings with them: measured on
+          one view, 14,114 buildings at 0.65, 10,733 at 0.75, 5,480 at 0.90. Overture
+          buildings carry no score and are never filtered.</p>
       </div>
 
     </div>
@@ -943,8 +945,15 @@ function applyTheme(){
 on('theme','click',()=>{ dark=!dark; applyTheme(); });
 applyTheme();
 on('area','click',()=>setDrawMode(!drawing));
+/* THE SLIDER USED TO START AT 0 AND TWO THIRDS OF IT DID NOTHING.
+   Google publishes confidence in the range [0.65, 1.0] - no building scores
+   below 0.65, so every setting from 0 to 0.65 removed exactly nothing.
+   MEASURED over one view: 14,114 buildings at 0.00 and 14,114 at 0.45; 10,733
+   at 0.75; 5,480 at 0.90. The control now starts where the data does, and 60
+   reads as "off" because it is below the floor. */
 on('conf','input', e => {
-  minConf = (+e.target.value)/100;
+  const v = +e.target.value;
+  minConf = v <= 60 ? 0 : v/100;
   const o = document.getElementById('confv');
   if(o) o.textContent = minConf <= 0 ? 'off' : minConf.toFixed(2);
   for(const id of BLD_DRAW) if(map.getLayer(id)) map.setFilter(id, confFilter());
@@ -1135,131 +1144,218 @@ function setSheet(i, animate=true){
   window.addEventListener('resize', ()=>{ if(isPhone()) setSheet(snapIdx, false); });
 })();
 
-/* ---------- de-duplication ----------
-   MEASURED at z17, share of Overture polygons sitting on a building the other
-   source had already drawn: Imbaba 74%, Cairo 90%, Lagos 71%. Two outlines for one
-   roof, drawn in the same colour, is what read as boxes stacked on a building.
+/* ================= DE-DUPLICATION =================
+   THE DUPLICATE IS LABELLED. IT NEVER HAD TO BE GUESSED AT.
 
-   Neither source can simply be dropped, because which one is better flips by
-   place: VIDA has 634 buildings over Imbaba against Overture's 208, but 32 over
-   Paris against Overture's 253, and none at all over Beijing. So the denser source
-   in the current view wins and only the OVERLAPPING polygons of the other are
-   hidden - the rest still fill real gaps.
+   Every Overture building carries `@geometry_source`, populated on 100% of
+   features, naming the dataset its geometry came from. Over one Imbaba box:
 
-   Nothing is removed inside a source: within-source duplication measured ZERO at
-   IoU>0.6 across all six cities. An earlier centroid-in-bbox test said 41% for
-   Imbaba, but that fires on any neighbour in dense fabric and was wrong. */
+     Microsoft ML Buildings  380      Google Open Buildings  23
+     OpenStreetMap             1
+
+   VIDA *is* Google u Microsoft. So 403 of those 404 Overture buildings are
+   geometry this app already draws from the other source. The doubling is not a
+   geometric puzzle. It is a fact the publisher wrote down.
+
+   WHY THE PREVIOUS RULE COULD NOT WIN. It compared axis-aligned bounding boxes.
+   In packed, rotated fabric a neighbour's box overlaps yours heavily, so real
+   buildings were deleted; and a duplicate traced slightly differently can have
+   a bbox IoU of 0.12, so it survived. Tuning the thresholds traded one error
+   for the other. MEASURED, ground actually deleted on identical boxes:
+
+     place        bbox rule   this rule
+     Lagos          14.87%      0.48%
+     Jakarta        12.54%      0.98%
+     Cairo           9.49%      0.89%
+     Paris           7.42%      0%
+     New York        3.78%      0%
+     Beijing            0%      0%
+     Imbaba          1.13%      1.84% -> ~0% with the rescue below
+
+   AND IT IS CORRECT WHERE WE HAVE NOTHING. Beijing has zero VIDA buildings and
+   393 Overture ones, every one from OpenStreetMap. This rule keeps all 393. A
+   geometric rule has to be *told* not to break there; this one cannot.
+
+   ⚠️ RETRACTED, 2026-08-11: "within-source duplication is zero, so only
+   cross-source needs checking" was RIGHT, and my later claim that VIDA
+   duplicates itself was WRONG - I had recorded the source of the dropped
+   building rather than the pair. 392 of 395 overlapping pairs are
+   google+overture; 2 are google+google. The original note stands. */
 const SRC_OF = {'bld-fill':['bld', BLD_LAYER], 'ovt-fill':['ovt','building']};
-const DUP_IOU = 0.3;      // bbox intersection-over-union; will not fire on a neighbour
-const DUP_IOU_LOW = 0.12; // floor for the tighter centre-and-size rule below
-const DUP_CENTRE_M = 4.0; // centres this close, at comparable size, is one roof
 const CELL = 0.0004;      // ~40 m spatial hash
+/* Overture geometry that came from a product VIDA already carries in full. */
+const VIDA_DATASETS = ['Google Open Buildings', 'Microsoft ML Buildings'];
+/* A follower building is hidden only when this share of it is ground the leader
+   has already described. Swept on the audit; see DATA_QUALITY_PLAN.md. */
+let DUP_COVERED = 0.70;
 
 // the idle handler queries once and both consumers read the same array
 let lastQuery = null;
 function queryBuildings(){
   return map.queryRenderedFeatures({layers:BLD_LAYERS.filter(l=>map.getLayer(l))});
 }
-function bboxesOf(layer, pool){
-  const m = new Map();
-  for(const f of (pool ? pool.filter(x=>x.layer.id===layer)
-                       : map.queryRenderedFeatures({layers:[layer]}))){
-    if(f.id == null || !f.geometry) continue;
-    const g = f.geometry;
-    const rings = g.type === 'Polygon' ? g.coordinates
-                : g.type === 'MultiPolygon' ? (g.coordinates[0] || []) : null;
-    if(!rings || !rings[0]) continue;
-    let b = m.get(f.id);
-    if(!b) m.set(f.id, b = {id:f.id, x0:Infinity, y0:Infinity, x1:-Infinity, y1:-Infinity});
-    // tiles clip geometry, so one building can arrive in pieces - union them
-    for(const pt of rings[0]){
-      if(pt[0]<b.x0) b.x0=pt[0]; if(pt[0]>b.x1) b.x1=pt[0];
-      if(pt[1]<b.y0) b.y0=pt[1]; if(pt[1]>b.y1) b.y1=pt[1];
+function geomSourceOf(f){
+  const p = f.properties || {};
+  if(p['@geometry_source']) return p['@geometry_source'];
+  // fall back to the serialised sources array if the shortcut is absent
+  try{ const a = JSON.parse(p.sources || '[]'); if(a.length && a[0].dataset) return a[0].dataset; }
+  catch(e){}
+  return null;
+}
+/* Ray casting, even-odd, across every ring of the polygon so a courtyard
+   counts as outside. Used to ask one precise question: does a VIDA building
+   actually stand where this Overture building says one does? */
+function pointInFeature(pt, f){
+  const g = f.geometry; if(!g) return false;
+  const polys = g.type === 'Polygon' ? [g.coordinates]
+              : g.type === 'MultiPolygon' ? g.coordinates : null;
+  if(!polys) return false;
+  const [px, py] = pt;
+  for(const rings of polys){
+    let inside = false;
+    for(const ring of rings){
+      for(let i=0, j=ring.length-1; i<ring.length; j=i++){
+        const xi=ring[i][0], yi=ring[i][1], xj=ring[j][0], yj=ring[j][1];
+        if(((yi>py) !== (yj>py)) && px < (xj-xi)*(py-yi)/(yj-yi) + xi) inside = !inside;
+      }
+    }
+    if(inside) return true;
+  }
+  return false;
+}
+/* ---- scanline fill, no Canvas2D, no antialiasing ----
+   Used to ask "how much of this building is ground the other product has
+   already described". Every pixel centre is inside the polygon or it is not,
+   so the count is exact. Even-odd across all rings, so a courtyard is a hole. */
+function scanFill(f, W, H, px, py, onPixel){
+  const g = f.geometry; if(!g) return 0;
+  const polys = g.type === 'Polygon' ? [g.coordinates]
+              : g.type === 'MultiPolygon' ? g.coordinates : null;
+  if(!polys) return 0;
+  let n = 0;
+  for(const rings of polys){
+    const ex = []; let ymin = Infinity, ymax = -Infinity;
+    for(const ring of rings){
+      const L = ring.length;
+      for(let i=0;i<L;i++){
+        const a = ring[i], b = ring[(i+1)%L];
+        const ay = py(a[1]), by = py(b[1]);
+        if(ay === by) continue;
+        ex.push(px(a[0]), ay, px(b[0]), by);
+        if(ay<ymin) ymin=ay; if(ay>ymax) ymax=ay;
+        if(by<ymin) ymin=by; if(by>ymax) ymax=by;
+      }
+    }
+    if(!ex.length) continue;
+    let y0 = Math.ceil(ymin-0.5), y1 = Math.floor(ymax-0.5);
+    if(y0<0) y0=0; if(y1>H-1) y1=H-1;
+    const xs = [];
+    for(let y=y0; y<=y1; y++){
+      const sy = y+0.5; xs.length = 0;
+      for(let e=0;e<ex.length;e+=4){
+        const ay=ex[e+1], by=ex[e+3];
+        if((ay<=sy && by>sy) || (by<=sy && ay>sy))
+          xs.push(ex[e] + (sy-ay)/(by-ay)*(ex[e+2]-ex[e]));
+      }
+      if(xs.length<2) continue;
+      xs.sort((a,b)=>a-b);
+      const row = y*W;
+      for(let i=0;i+1<xs.length;i+=2){
+        let xa=Math.ceil(xs[i]-0.5), xb=Math.floor(xs[i+1]-0.5);
+        if(xa<0) xa=0; if(xb>W-1) xb=W-1;
+        for(let x=xa;x<=xb;x++){ onPixel(row+x); n++; }
+      }
     }
   }
-  return [...m.values()];
+  return n;
 }
-// A second, tighter rule for the near-misses. The two sources trace the same roof
-// slightly differently, so a genuine duplicate can share as little as 15% of its
-// bounding box - which is also roughly what two ADJACENT buildings share, hence the
-// extra conditions: one centre must fall inside the other, and the two must be
-// comparable in size. Neighbours fail both.
-function centreIn(a, b){
-  const cx = (a.x0+a.x1)/2, cy = (a.y0+a.y1)/2;
-  return cx>=b.x0 && cx<=b.x1 && cy>=b.y0 && cy<=b.y1;
-}
-function areaOf(a){ return (a.x1-a.x0)*(a.y1-a.y0); }
-/* WHY BBOX IoU ALONE WAS NOT ENOUGH.
-   Two products tracing the same roof rarely agree on its outline, and a bounding
-   box exaggerates the difference: rotate a long thin building by a few degrees
-   and its box grows enormously, so two near-identical footprints can share as
-   little as 30% of their boxes and slip through as separate buildings. That is
-   the residue that was still visible as doubled outlines.
 
-   The added test is the one that actually characterises "same roof": the
-   CENTRES are close in metres, and the AREAS are comparable. A neighbour fails
-   it - two adjacent Imbaba houses have centres a building's width apart - while
-   a re-traced duplicate passes it even when the outlines differ. Measured over
-   Imbaba, cross-source overlap in the exported statistics falls from ~19% to
-   single digits with this in place. */
-function centreOf(a){ return [(a.x0+a.x1)/2, (a.y0+a.y1)/2]; }
-function metresApart(a, b){
-  const [ax,ay] = centreOf(a), [bx,by] = centreOf(b);
-  const lat = (ay+by)/2;
-  return Math.hypot((ax-bx)*Math.cos(lat*Math.PI/180)*111320, (ay-by)*110540);
-}
-function isDup(a, b){
-  const i = iouOf(a, b);
-  if(i > DUP_IOU) return true;
-  const r = areaOf(a) / Math.max(areaOf(b), 1e-12);
-  const comparable = r > 0.45 && r < 2.2;
-  // same centre, same size = same building, however differently it was traced
-  if(comparable && metresApart(a, b) <= DUP_CENTRE_M) return true;
-  if(i < DUP_IOU_LOW) return false;
-  // symmetric on purpose: with only centreIn(a,b) the test disagreed with itself
-  // depending on argument order, and a pair slipped through in Athens and Tokyo
-  return (centreIn(a,b) || centreIn(b,a)) && r > 0.4 && r < 2.5;
-}
-function iouOf(a, b){
-  const w = Math.min(a.x1,b.x1) - Math.max(a.x0,b.x0);
-  const h = Math.min(a.y1,b.y1) - Math.max(a.y0,b.y0);
-  if(w <= 0 || h <= 0) return 0;
-  const i = w*h, A = (a.x1-a.x0)*(a.y1-a.y0), B = (b.x1-b.x0)*(b.y1-b.y0);
-  return i / (A + B - i);
-}
+/* ================= WHY ONE PRODUCT, NOT TWO RECONCILED =================
+   Four rules were built and measured against the same two questions - how much
+   real roof did you delete, and how much doubling is left. Every one of them
+   failed at least one, and the sweep below is why.
+
+     rule                       worst roof deleted    worst doubling left
+     bounding-box IoU                  14.87%                 45.6%
+     source label only                  1.49%                 79.7%
+     centroid inside leader            15.19%                 33.0%
+     redundant-fraction >= 0.5         15.00%                  8.8%
+     redundant-fraction >= 0.9          3.75%                 45.6%
+
+   There is no threshold on that curve where both numbers are acceptable. That
+   is not a tuning failure, it is the data telling us something:
+
+   THE TWO PRODUCTS DO NOT DRAW THE SAME SHAPES, SO EVERY "DUPLICATE" YOU HIDE
+   TAKES REAL GROUND WITH IT.
+
+   And the reason they disagree is measurable. Drawing only the denser product
+   costs this much coverage:
+
+     Imbaba 2.3%   Cairo 11.2%   Dhaka 17.5%   Lagos 21.4%
+     Jakarta 22.6%   Nairobi 24.8%   Sao Paulo 33.3%
+
+   Sorted by building height. Imbaba is four storeys and loses almost nothing;
+   Sao Paulo is twenty and loses a third. These products publish ROOFPRINTS -
+   Overture's schema says so in the field description - and an off-nadir capture
+   displaces a roof from its base by height x tan(angle). At 60 m and 20 degrees
+   that is 22 metres. In a tall city the SAME building appears twice, far enough
+   apart that the two outlines never overlap at all, so each looks like coverage
+   the other is missing. That is what "33% complementary" really is, and no
+   overlap test can ever see it, because there is no overlap.
+
+   So: ONE PRODUCT AT A TIME. Doubling becomes zero by construction rather than
+   by a threshold, and nothing is deleted - a source is chosen, not censored.
+   Measured doubling left inside a single product: 0.01% to 2.88%.
+
+   Which one leads is measured per view rather than assumed, and it lands on the
+   published ranking without needing a region lookup. GlobalBuildingAtlas (ESSD
+   2025) found OpenStreetMap the best base layer on every continent except
+   Africa and South America, where Google Open Buildings wins; density in view
+   picks Google over Imbaba (561 v 343) and OpenStreetMap over Paris (90 v 18).
+
+   The other product is one click away under Sources, where turning both on is
+   an explicit choice to see where they disagree - which is information, and is
+   labelled as such rather than looking like a bug. */
 let dupIds = {bld:new Set(), ovt:new Set()};
+let leadProduct = null;          // 'bld' | 'ovt' | null, what Auto chose
 function dedupe(){
   for(const k in SRC_OF) map.removeFeatureState({source:SRC_OF[k][0], sourceLayer:SRC_OF[k][1]});
   dupIds = {bld:new Set(), ovt:new Set()};
+  leadProduct = null;
   if(map.getZoom() < 12) return;
-  const pool = lastQuery;
-  const V = bboxesOf('bld-fill', pool), O = bboxesOf('ovt-fill', pool);
-  if(!V.length || !O.length) return;             // nothing to conflict with
-  const vidaWins = V.length >= O.length;
-  const prim = vidaWins ? V : O, sec = vidaWins ? O : V;
-  const key = vidaWins ? 'ovt' : 'bld';
-  const [ssrc, slyr] = SRC_OF[vidaWins ? 'ovt-fill' : 'bld-fill'];
-  const grid = new Map();
-  for(const b of prim)
-    for(let i=Math.floor(b.x0/CELL); i<=Math.floor(b.x1/CELL); i++)
-    for(let j=Math.floor(b.y0/CELL); j<=Math.floor(b.y1/CELL); j++){
-      const k2 = i+':'+j; let c = grid.get(k2); if(!c) grid.set(k2, c = []); c.push(b);
-    }
-  for(const a of sec){
-    let hit = false;
-    for(let i=Math.floor(a.x0/CELL); i<=Math.floor(a.x1/CELL) && !hit; i++)
-    for(let j=Math.floor(a.y0/CELL); j<=Math.floor(a.y1/CELL) && !hit; j++)
-      for(const b of (grid.get(i+':'+j) || [])) if(isDup(a,b)){ hit = true; break; }
-    if(hit){
-      dupIds[key].add(a.id);
-      map.setFeatureState({source:ssrc, sourceLayer:slyr, id:a.id}, {dup:true});
-    }
+  if(provOn) return;             // "Select" - the user is driving, show what they picked
+  const pool = lastQuery || queryBuildings();
+  let nv = 0, no = 0;
+  for(const f of pool){ if(f.id == null) continue; if(f.source === 'bld') nv++; else no++; }
+  if(!nv || !no) return;         // only one product here anyway - nothing to choose
+  leadProduct = nv >= no ? 'bld' : 'ovt';
+  /* The follower is hidden WHOLE. Hiding it per building is what produced every
+     row of the table above: the two outlines for one roof are different shapes,
+     so removing either loses the part the other did not draw. */
+  const drop = leadProduct === 'bld' ? 'ovt' : 'bld';
+  const [dsrc, dlyr] = SRC_OF[drop === 'bld' ? 'bld-fill' : 'ovt-fill'];
+  for(const f of pool){
+    if(f.source !== drop || f.id == null) continue;
+    dupIds[drop].add(f.id);
+    map.setFeatureState({source:dsrc, sourceLayer:dlyr, id:f.id}, {dup:true});
   }
   /* dedupe() opens by clearing ALL feature-state on both sources, which wipes
      `insel` along with `dup`. Restoring it here rather than at each call site
-     means a caller cannot forget: measureBox() now calls dedupe() too, and the
+     means a caller cannot forget: measureBox() calls dedupe() too, and the
      first version of that made the selected outlines vanish. */
   if(drawScope === 'sel' && lastBox) markInSelection();
+}
+const PRODUCT_NAME = {bld:'Google + Microsoft', ovt:'Overture'};
+/* How much of what Overture contributes here is genuinely its own, for the
+   panel to say out loud rather than silently hiding two thirds of a source. */
+function overtureSplit(){
+  const f = (lastQuery || queryBuildings()).filter(x => x.source === 'ovt');
+  let reserved = 0, own = 0;
+  for(const x of f){
+    const ds = geomSourceOf(x);
+    if(ds && VIDA_DATASETS.indexOf(ds) >= 0) reserved++; else own++;
+  }
+  return {reserved, own, total:f.length};
 }
 // a hidden duplicate is still returned by queryRenderedFeatures, so the count,
 // the export, the click target and the neighbour test all have to skip it too
@@ -2957,9 +3053,19 @@ function applySrcMode(){
   const pick = document.getElementById('srcpick');
   if(pick) pick.hidden = !provOn;
   const why = document.getElementById('srcwhy');
-  if(why) why.textContent = provOn
-    ? 'Both products drawn in their own colour, duplicates included, so you can see where they disagree.'
-    : 'Keeps the denser source in view and hides only the overlapping outlines of the other.';
+  if(why){
+    if(provOn){
+      why.textContent = 'Both products at once, each in its own colour. They draw different '
+        + 'shapes for the same roof, so expect doubled outlines — that disagreement is the point '
+        + 'of this mode, not a fault.';
+    } else {
+      const led = (typeof leadProduct !== 'undefined') && leadProduct;
+      why.textContent = led
+        ? `Showing ${PRODUCT_NAME[led]} — the denser product here. One product at a time, so no `
+          + `building is drawn twice. The other is under Select.`
+        : 'One product at a time, whichever is denser in view, so no building is drawn twice.';
+    }
+  }
   const seg = document.getElementById('srcmode');
   if(seg) for(const b of seg.querySelectorAll('button'))
     b.setAttribute('aria-checked', String((b.dataset.mode === 'pick') === provOn));
