@@ -2818,11 +2818,13 @@ function applyDrawScope(){
   : drawScope === 'off' ? 'Imagery only. Nothing is outlined and nothing can be clicked.'
   : (lastBox ? 'Only the buildings inside your selected area are outlined.'
              : 'Select an area below and only the buildings inside it will be outlined.');
-  /* AREA IS AVAILABLE IN EVERY MODE, not only "In selection". Hiding it there
-     made drawing a rectangle look like a property of one display mode, when it
-     is the thing that decides what gets measured and exported in all of them. */
+  /* AREA BELONGS TO "In selection" AND NOWHERE ELSE. It was briefly offered in
+     every mode on the reasoning that a rectangle decides what gets measured.
+     But "Everywhere" already answers the question the rectangle asks - it
+     exports the view - so offering both put two extents on screen with no way
+     to tell which one was live. One mode, one extent. */
   const tools = document.getElementById('areatools');
-  if(tools) tools.hidden = drawScope === 'off';
+  if(tools) tools.hidden = drawScope !== 'sel';
   const ex = document.getElementById('exblock');
   if(ex) ex.hidden = false;
   const hint = document.getElementById('areahint');
@@ -2840,7 +2842,20 @@ function applyDrawScope(){
 (function initDrawScope(){
   const seg = document.getElementById('drawmode'); if(!seg) return;
   for(const b of seg.querySelectorAll('button')){
-    const go = () => { drawScope = b.dataset.scope; applyDrawScope(); };
+    /* CHANGING THE MODE CLEARS THE SELECTION. Leaving it behind meant the
+       rectangle stayed drawn on the map, and the report kept describing it,
+       while the control above said outlines were now Everywhere or Off -
+       three things on screen disagreeing about whether an area was selected.
+       Switching mode is a decision to look at something else.
+
+       Re-selecting the mode you are already in does nothing, so a stray second
+       click cannot throw away an area you just drew. */
+    const go = () => {
+      if(b.dataset.scope === drawScope) return;
+      drawScope = b.dataset.scope;
+      if(drawing) setDrawMode(false);
+      if(lastBox) clearSelection(); else applyDrawScope();
+    };
     b.addEventListener('click', go);
     b.addEventListener('keydown', e => {
       if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); go(); }
