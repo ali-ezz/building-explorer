@@ -1272,8 +1272,25 @@ const notDup = f => !(f.id != null && dupIds[f.source] && dupIds[f.source].has(f
    said so - every number downstream was quietly computed on half the data.
    A missing source has to be visible, because silence here reads as "there are
    no buildings" rather than "we could not fetch them". */
+/* ⚠ THIS WARNING WAS FIRING FALSELY AND COULD NOT BE DISMISSED. Three faults,
+   all found by driving the app across eight cities in one run:
+
+   1. IT LISTED IMAGERY. The message claims "figures below are computed on what
+      did load", and imagery contributes to NO figure - not a count, not an
+      area, not block complexity. A photograph failing to arrive is visible on
+      the map by itself. Only the sources that feed a number belong here, and
+      the message now names what is actually affected.
+   2. IT WAS A LATCH. One transient tile error during a fast pan set the flag
+      forever. Panning across Paris and New York left a permanent banner saying
+      the numbers were computed on partial data while all four sources were
+      loaded and complete.
+   3. IT STILL NAMED `bse` AND `plc` - the land and places sources, deleted
+      earlier. Dead entries in a table nobody rereads.
+
+   The flag now clears itself when the source delivers a tile again, which is
+   the only evidence that actually contradicts "this source is failing". */
 const SRC_NAME = {bld:'Google + Microsoft buildings', ovt:'Overture buildings',
-  rds:'Roads', div:'Divisions', bse:'Land and water', plc:'Places', sat:'Imagery'};
+  rds:'Roads'};
 const failedSrc = new Set();
 map.on('error', e => {
   const id = e && e.sourceId;
@@ -1281,11 +1298,20 @@ map.on('error', e => {
   failedSrc.add(id);
   refresh();
 });
+map.on('sourcedata', e => {
+  const id = e && e.sourceId;
+  if(!id || !failedSrc.has(id)) return;
+  // a source handing over a loaded tile is not a source that is failing
+  if(e.tile && e.tile.state === 'loaded'){ failedSrc.delete(id); refresh(); }
+});
 function sourceWarning(){
   if(!failedSrc.size) return '';
   const names = [...failedSrc].map(s=>SRC_NAME[s]).join(', ');
+  const what = failedSrc.has('rds') && failedSrc.size === 1
+    ? 'street access cannot be measured here'
+    : 'the counts and areas below are computed on what did load';
   return `<br><span style="color:var(--estimated)">⚠ could not load: ${names}
-    — figures below are computed on what did load</span>`;
+    — ${what}</span>`;
 }
 
 /* ---------- status ---------- */
@@ -1346,18 +1372,43 @@ function refresh(){
      line now costs one count; everything expensive happens once, on a box. */
   const f = visibleBuildings() || [];
   const sel = (lastBox && lastStats) ? lastStats.n : null;
-  el.innerHTML =
-    (sel != null
-      ? `<b>${sel.toLocaleString()}</b> buildings in the selected area`
-      : `<b>${f.length.toLocaleString()}</b> buildings in view`)
-    + ` · imagery <b>${YEARS[yearIdx]}</b>`
-    + sourceWarning();
+  /* "0 BUILDINGS IN VIEW" MUST NOT BE SAID WHILE THE TILES ARE STILL COMING.
+     refresh() runs on moveend, which fires the instant the camera stops - long
+     before a range request into a 179 GB archive has returned anything. Jump to
+     Paris and the panel states, in the same confident type it uses for a real
+     measurement, that there are no buildings in Paris. Seven seconds later it
+     says 441.
+
+     This is the same defect the source warning exists to prevent - an absent
+     ANSWER and an absent BUILDING rendering identically - reappearing one line
+     above it. areTilesLoaded() distinguishes them, so it is asked. */
+  /* areTilesLoaded() ALONE IS NOT ENOUGH, and this is the subtle half.
+     refresh() runs on moveend, and at that instant the tile requests for the
+     NEW view have not been registered yet - so areTilesLoaded() answers about
+     the view you just left and cheerfully returns true. Measured: jumping to
+     Paris printed "0 buildings in view" with settled=true at 200 ms, and 441
+     at 4 s. The map itself knows the difference between "moved" and "finished",
+     via moveend and idle, so that is what is tracked. */
+  const settled = !awaitingTiles && map.areTilesLoaded();
+  const head = sel != null
+    ? `<b>${sel.toLocaleString()}</b> buildings in the selected area`
+    : (!settled && !f.length)
+      ? `<span class="skel"></span> counting buildings…`
+      : `<b>${f.length.toLocaleString()}</b> buildings in view`
+        + (settled ? '' : ` <span style="color:var(--faint)">· still loading</span>`);
+  el.innerHTML = head + ` · imagery <b>${YEARS[yearIdx]}</b>` + sourceWarning();
   updateExport(f.length);
 }
-map.on('moveend', ()=>{ lastQuery = null; refresh(); });
+/* true from the moment the camera moves until the map reports idle - the
+   window in which a count is a guess rather than a measurement. Starts true so
+   the first paint before any tile has arrived says "counting" rather than "0". */
+let awaitingTiles = true;
+map.on('movestart', ()=>{ awaitingTiles = true; });
+map.on('moveend', ()=>{ lastQuery = null; awaitingTiles = true; refresh(); });
 // setFeatureState repaints, which fires idle again; keying on the view stops the loop
 let lastView = '';
 map.on('idle', ()=>{
+  awaitingTiles = false;
   const c = map.getCenter();
   lastQuery = queryBuildings();
   /* The feature COUNT is part of the key, not just the position. Keying on position
@@ -2058,7 +2109,13 @@ function exportTarget(){
   const b = map.getBounds();
   return {bb:{w:b.getWest(), e:b.getEast(), s:b.getSouth(), n:b.getNorth()}, kind:'view'};
 }
+/* `viewCount` is optional. Callers that already counted pass it; callers that
+   have not are better served counting than passing a placeholder. applyDrawScope
+   used to pass a literal 0, so switching Off -> Everywhere announced "the
+   current view - 89.7 ha - 0 buildings" over a view holding 3,456 of them,
+   until the next idle happened to correct it. */
 function updateExport(viewCount){
+  if(viewCount == null) viewCount = (visibleBuildings() || []).length;
   const lbl = document.getElementById('extarget');
   const a = document.getElementById('ex-all'), m = document.getElementById('ex-mask');
   if(!lbl) return;
@@ -2835,7 +2892,7 @@ function applyDrawScope(){
   if(hint) hint.textContent = lastBox
     ? 'Selected. Clear to measure somewhere else, or select again to replace it.'
     : 'Drag a rectangle on the map. Escape cancels.';
-  updateExport(0);
+  updateExport();
   if(!map.getLayer('bld-fill')) return;
   markInSelection();
   for(const id of BLD_DRAW)
