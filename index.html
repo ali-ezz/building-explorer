@@ -309,7 +309,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <button id="upload">Upload image</button>
         <button id="theme">Dark</button>
       </div>
-      <input type="file" id="tif" accept=".tif,.tiff,image/tiff,.jpg,.jpeg,.png,.webp" hidden>
+      <input type="file" id="tif" hidden>
     </div>
     <div class="lyrs">
       <h2>Outlines</h2>
@@ -3592,6 +3592,488 @@ function applySrcMode(){
 })();
 
 
+/* ---------- EXIF: where a drone says it was ----------
+   A JPEG carries no map coordinates in its pixels, but almost every drone
+   writes GPS into EXIF, and often the altitude it flew at. That turns "place it
+   by hand and hope" into "it lands in the right field and snapping does the
+   last metre". Parsed here rather than with a library: it is one APP1 segment,
+   a TIFF header, and two IFDs. */
+function readEXIF(buf){
+  const d = new DataView(buf);
+  if(d.getUint16(0) !== 0xFFD8) return null;              // not a JPEG
+  let off = 2;
+  while(off < d.byteLength - 4){
+    if(d.getUint16(off) !== 0xFFE1){                      // walk to APP1
+      if((d.getUint16(off) & 0xFF00) !== 0xFF00) return null;
+      off += 2 + d.getUint16(off+2); continue;
+    }
+    const len = d.getUint16(off+2);
+    if(d.getUint32(off+4) !== 0x45786966) { off += 2 + len; continue; }  // "Exif"
+    const tiff = off + 10;
+    const le = d.getUint16(tiff) === 0x4949;              // II little / MM big
+    const u16 = o => d.getUint16(o, le), u32 = o => d.getUint32(o, le);
+    if(u16(tiff+2) !== 42) return null;
+    const ifd0 = tiff + u32(tiff+4);
+    let gpsOff = 0;
+    const n0 = u16(ifd0);
+    for(let i=0;i<n0;i++){
+      const e = ifd0 + 2 + i*12;
+      if(u16(e) === 0x8825) gpsOff = tiff + u32(e+8);     // GPSInfo pointer
+    }
+    if(!gpsOff) return null;
+    const rat = (o, cnt) => { const out=[];
+      for(let i=0;i<cnt;i++) out.push(u32(o+i*8) / (u32(o+i*8+4) || 1));
+      return out; };
+    const G = {};
+    const ng = u16(gpsOff);
+    for(let i=0;i<ng;i++){
+      const e = gpsOff + 2 + i*12;
+      const tag = u16(e), typ = u16(e+2), cnt = u32(e+4);
+      const vo = cnt*(typ===5?8:typ===2?1:4) > 4 ? tiff + u32(e+8) : e + 8;
+      if(tag === 1 || tag === 3) G[tag] = String.fromCharCode(d.getUint8(e+8));   // N/S, E/W
+      else if(tag === 2 || tag === 4) G[tag] = rat(vo, 3);                        // lat/lon dms
+      else if(tag === 6) G[tag] = rat(vo, 1)[0];                                  // altitude
+    }
+    if(!G[2] || !G[4]) return null;
+    const dms = a => a[0] + a[1]/60 + a[2]/3600;
+    let lat = dms(G[2]), lng = dms(G[4]);
+    if(G[1] === 'S') lat = -lat;
+    if(G[3] === 'W') lng = -lng;
+    if(!isFinite(lat) || !isFinite(lng) || Math.abs(lat)>90 || Math.abs(lng)>180) return null;
+    return {lat, lng, altitude: isFinite(G[6]) ? G[6] : null};
+  }
+  return null;
+}
+
+/* ---------- VECTORS IN: your polygons against theirs ----------
+   The interesting direction. Upload what you surveyed and the app scores it
+   building by building against the published data - which agree, which you have
+   and they do not, which they have and you do not. That is the only way to turn
+   "the data is wrong here" into a number. */
+let userVectors = null;
+function parseKML(text){
+  const doc = new DOMParser().parseFromString(text, 'text/xml');
+  const feats = [];
+  const coordsOf = el => (el.textContent || '').trim().split(/\s+/)
+    .map(t => t.split(',').map(Number)).filter(a => a.length >= 2 && isFinite(a[0]) && isFinite(a[1]))
+    .map(a => [a[0], a[1]]);
+  for(const pm of doc.getElementsByTagName('Polygon')){
+    const outer = pm.getElementsByTagName('coordinates')[0];
+    if(!outer) continue;
+    const ring = coordsOf(outer);
+    if(ring.length >= 4) feats.push({type:'Feature', properties:{}, geometry:{type:'Polygon', coordinates:[ring]}});
+  }
+  for(const pt of doc.getElementsByTagName('Point')){
+    const c = pt.getElementsByTagName('coordinates')[0];
+    if(!c) continue;
+    const r = coordsOf(c);
+    if(r.length) feats.push({type:'Feature', properties:{}, geometry:{type:'Point', coordinates:r[0]}});
+  }
+  return {type:'FeatureCollection', features:feats};
+}
+function parseCSV(text){
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if(!lines.length) return {type:'FeatureCollection', features:[]};
+  const sep = (lines[0].match(/;/g)||[]).length > (lines[0].match(/,/g)||[]).length ? ';' : ',';
+  const head = lines[0].split(sep).map(h => h.trim().toLowerCase().replace(/^"|"$/g,''));
+  const iLat = head.findIndex(h => /^(lat|latitude|y)$/.test(h));
+  const iLon = head.findIndex(h => /^(lon|lng|long|longitude|x)$/.test(h));
+  const iWkt = head.findIndex(h => /(wkt|geom|geometry)/.test(h));
+  const feats = [];
+  for(let i=1;i<lines.length;i++){
+    const c = lines[i].split(sep).map(v => v.trim().replace(/^"|"$/g,''));
+    if(iWkt >= 0 && c[iWkt]){
+      const m = /POLYGON\s*\(\((.+?)\)\)/i.exec(c[iWkt]);
+      if(m){
+        const ring = m[1].split(',').map(t => t.trim().split(/\s+/).map(Number))
+                      .filter(a => a.length>=2 && isFinite(a[0]) && isFinite(a[1]));
+        if(ring.length >= 4) feats.push({type:'Feature', properties:{}, geometry:{type:'Polygon', coordinates:[ring]}});
+        continue;
+      }
+    }
+    if(iLat >= 0 && iLon >= 0){
+      const la = +c[iLat], lo = +c[iLon];
+      if(isFinite(la) && isFinite(lo))
+        feats.push({type:'Feature', properties:{}, geometry:{type:'Point', coordinates:[lo, la]}});
+    }
+  }
+  return {type:'FeatureCollection', features:feats};
+}
+function vectorBounds(fc){
+  let w=180, s=90, e=-180, n=-90, any=false;
+  const walk = c => { if(typeof c[0] === 'number'){ any=true;
+      if(c[0]<w)w=c[0]; if(c[0]>e)e=c[0]; if(c[1]<s)s=c[1]; if(c[1]>n)n=c[1]; }
+    else for(const x of c) walk(x); };
+  for(const f of fc.features) if(f.geometry && f.geometry.coordinates) walk(f.geometry.coordinates);
+  return any ? {w,s,e,n} : null;
+}
+/* Agreement is decided by CENTROIDS INSIDE POLYGONS, not by bbox overlap - the
+   same lesson that cost this project a day on deduplication. Two adjacent
+   buildings share a wall, so their boxes overlap heavily while neither centre
+   is inside the other. */
+function compareVectors(fc){
+  const bb = vectorBounds(fc);
+  if(!bb) return null;
+  dedupe();
+  const pub = uniqBy(buildingsIn(bb));
+  const mine = fc.features.filter(f => f.geometry &&
+    (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'));
+  const matchedPub = new Set();
+  let agree = 0;
+  for(const f of mine){
+    const c = centroid(f);
+    let hit = null;
+    if(c) for(const q of pub) if(pointInFeature(c, q)){ hit = q; break; }
+    if(!hit){                                  // try it the other way round
+      for(const q of pub){ const cq = centroid(q);
+        if(cq && pointInFeature(cq, f)){ hit = q; break; } }
+    }
+    if(hit){ agree++; matchedPub.add(featKey(hit)); }
+  }
+  const missingFromPublished = mine.length - agree;
+  const extraInPublished = pub.filter(q => !matchedPub.has(featKey(q))).length;
+  return {bb, mine:mine.length, published:pub.length, agree,
+          missingFromPublished, extraInPublished,
+          points: fc.features.length - mine.length};
+}
+function uniqBy(a){ const s=new Set(), o=[];
+  for(const f of a){ const k=featKey(f); if(k!=null){ if(s.has(k)) continue; s.add(k);} o.push(f); }
+  return o; }
+
+async function loadVectorFile(file, say, kind){
+  const text = await file.text();
+  let fc = null;
+  if(kind.kind === 'vector')          fc = JSON.parse(text);
+  else if(kind.kind === 'vector-kml') fc = parseKML(text);
+  else                                fc = parseCSV(text);
+  if(fc && fc.type === 'Feature') fc = {type:'FeatureCollection', features:[fc]};
+  if(!fc || !fc.features || !fc.features.length)
+    throw new Error('no features found in this file');
+  userVectors = fc;
+  const bb = vectorBounds(fc);
+  if(!bb) throw new Error('the features carry no coordinates');
+  // draw them
+  if(map.getLayer('uv-line')) map.removeLayer('uv-line');
+  if(map.getLayer('uv-fill')) map.removeLayer('uv-fill');
+  if(map.getSource('uvsrc')) map.removeSource('uvsrc');
+  map.addSource('uvsrc', {type:'geojson', data:fc});
+  map.addLayer({id:'uv-fill', type:'fill', source:'uvsrc',
+    paint:{'fill-color':'#ffd166','fill-opacity':0.18}});
+  map.addLayer({id:'uv-line', type:'line', source:'uvsrc',
+    paint:{'line-color':'#ffd166','line-width':1.8}});
+  map.fitBounds([[bb.w,bb.s],[bb.e,bb.n]], {padding:50, duration:800});
+  say(kindPanel(file, kind, `<div class="grp"><h2>Your file</h2><table>
+      ${fmtRow('Features', `<span class="num">${fc.features.length.toLocaleString()}</span>`)}
+      ${fmtRow('Extent', `${(areaKm2(bb)).toFixed(3)} km²`)}
+    </table></div>
+    <p class="empty">Comparing with the published data…</p>`));
+  await new Promise(r=>setTimeout(r, 1200));      // let the tiles arrive
+  const cmp = compareVectors(fc);
+  const host = document.getElementById('body');
+  if(!cmp){ host.insertAdjacentHTML('beforeend',
+    '<div class="note note-warn">Nothing to compare — no polygons in this file.</div>'); return; }
+  const pct = cmp.mine ? (100*cmp.agree/cmp.mine).toFixed(1) : '0';
+  say(kindPanel(file, kind, `
+    <div class="grp"><h2>Yours against the published data</h2><table>
+      ${fmtRow('Your polygons', `<span class="num">${cmp.mine.toLocaleString()}</span>`)}
+      ${fmtRow('Published here', `<span class="num">${cmp.published.toLocaleString()}</span>`,
+        'Google, Microsoft or OpenStreetMap, whichever leads on this ground')}
+      ${fmtRow('Agree', `<span class="num">${cmp.agree.toLocaleString()}</span> of ${cmp.mine}
+        <span class="num">(${pct}%)</span>`, 'one of yours sits on one of theirs')}
+      ${fmtRow('They are missing', `<span class="num">${cmp.missingFromPublished.toLocaleString()}</span>`,
+        'buildings you mapped that no published source has here')}
+      ${fmtRow('They have extra', `<span class="num">${cmp.extraInPublished.toLocaleString()}</span>`,
+        'published buildings with nothing of yours on them — either they are wrong, '
+        + 'or your survey did not cover them')}
+      ${cmp.points ? fmtRow('Points ignored', `<span class="num">${cmp.points}</span>`,
+        'only polygons can be matched to a footprint') : ''}
+    </table>
+    <div class="note note-info"><strong>Matched by centroid inside polygon, not by
+    overlapping boxes.</strong> In dense fabric two neighbours share a wall, so their
+    bounding boxes overlap heavily while neither centre is inside the other — a bbox test
+    scores neighbours as matches and is why this project's first deduplication attempt
+    deleted 14.87% of real roof.</div></div>`));
+}
+
+/* ================= READ THE PICTURE ITSELF =================
+   Everything else in this app re-serves what someone else already traced. This
+   is the one place it looks at pixels and decides for itself, and it exists for
+   a specific reason: every accuracy limit measured here is a limit of OUR
+   imagery - 0.31-0.5 m and +/-8.47 m over nine tenths of Earth, one pixel per
+   party wall. A drone frame at 5 cm is ten times finer than anything we can
+   stream, and no published footprint was ever traced from it.
+
+   PUBLIC WEIGHTS, NOT OURS. geobase/building-footprint-segmentation is a U-Net
+   published for exactly this, quantised to 15 MB, served CORS-open from Hugging
+   Face under the MIT-licensed geoai.js project. Nothing is trained here and
+   nothing is uploaded: the model comes to the picture.
+
+   ⚠️ ITS QUALITY ON DENSE INFORMAL FABRIC IS UNKNOWN AND MUST BE MEASURED, NOT
+   ASSUMED. It is trained on aerial imagery, and every published comparison says
+   dense informal settlement is where such models break down. So the result is
+   always shown beside the published footprints with an agreement figure, never
+   instead of them, and it is labelled as a reading of the picture rather than a
+   fact about the ground. When better weights exist, only MODEL_URL changes. */
+const MODEL_URL = 'https://huggingface.co/geobase/building-footprint-segmentation/resolve/main/onnx/model_quantized.onnx';
+const ORT_URL   = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.webgpu.min.js';
+let ortPromise = null, session = null;
+function loadORT(){
+  if(!ortPromise) ortPromise = new Promise((res, rej) => {
+    const el = document.createElement('script');
+    el.src = ORT_URL;
+    el.onload = () => res(window.ort);
+    el.onerror = () => { ortPromise = null; rej(new Error('the model runtime could not be loaded')); };
+    document.head.appendChild(el);
+  });
+  return ortPromise;
+}
+async function getSession(progress){
+  if(session) return session;
+  const ort = await loadORT();
+  ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+  progress && progress('Downloading the model (15 MB, once)…');
+  const r = await fetch(MODEL_URL);
+  if(!r.ok) throw new Error('the model could not be downloaded');
+  const buf = await r.arrayBuffer();
+  progress && progress('Starting it up…');
+  /* WebGPU when the browser has it - verified 19x faster than WASM for this
+     shape of work in the published benchmarks - and WASM when it does not,
+     which is slower but never a failure. */
+  const providers = navigator.gpu ? ['webgpu','wasm'] : ['wasm'];
+  session = await ort.InferenceSession.create(buf, {executionProviders: providers});
+  return session;
+}
+/* The model's own metadata says what it wants, so nothing is hard-coded: a
+   different set of weights with a different input size drops in unchanged. */
+function modelInputSize(sess){
+  const name = sess.inputNames[0];
+  const md = sess.inputMetadata && (sess.inputMetadata[name] || sess.inputMetadata[0]);
+  const dims = md && (md.dimensions || md.shape);
+  /* LAYOUT IS READ, NOT ASSUMED. The first attempt hard-coded NCHW 512x512 from
+     the preprocessor's "channels_first" note and the model refused it outright:
+       Got invalid dimensions for input_1 - index 1 Got 3 Expected 256,
+       index 3 Got 512 Expected 3
+     which is ONNX saying, precisely, "I am NHWC at 256". A published config and
+     the graph can disagree; only the graph runs. Detecting it here means a
+     different set of weights, in either layout at any size, drops in unchanged. */
+  let h = 256, w = 256, layout = 'nhwc';
+  if(dims && dims.length >= 4){
+    const d1 = dims[1], d2 = dims[2], d3 = dims[3];
+    const chLast = (d3 === 3 || d3 === 1 || d3 === 4);
+    const chFirst = (d1 === 3 || d1 === 1 || d1 === 4);
+    if(chLast && !chFirst){ layout='nhwc'; h = +d1 || h; w = +d2 || w; }
+    else if(chFirst){       layout='nchw'; h = +d2 || h; w = +d3 || w; }
+    else {                  layout='nchw'; h = +d2 || h; w = +d3 || w; }
+    if(!(h > 0)) h = 256; if(!(w > 0)) w = 256;
+  }
+  return {w, h, name, layout};
+}
+/* Tiled, because a photograph is bigger than the model's window and a single
+   resize would throw away the resolution that made the upload worth uploading.
+   Tiles overlap and are blended, so a building on a seam is not cut in half. */
+async function segmentCanvas(cv, progress){
+  const sess = await getSession(progress);
+  const ort = window.ort;
+  const {w:TW, h:TH, name:IN, layout:LAY} = modelInputSize(sess);
+  const W = cv.width, H = cv.height;
+  const OVER = Math.round(Math.min(TW, TH) * 0.125);
+  const stepX = Math.max(1, TW - OVER), stepY = Math.max(1, TH - OVER);
+  const nx = Math.max(1, Math.ceil((W - OVER) / stepX));
+  const ny = Math.max(1, Math.ceil((H - OVER) / stepY));
+  const acc = new Float32Array(W*H), hits = new Float32Array(W*H);
+  const src = cv.getContext('2d', {willReadFrequently:true});
+  const tile = document.createElement('canvas'); tile.width = TW; tile.height = TH;
+  const tctx = tile.getContext('2d', {willReadFrequently:true});
+  const outName = sess.outputNames[0];
+  let done = 0;
+  for(let ty=0; ty<ny; ty++) for(let tx=0; tx<nx; tx++){
+    const x0 = Math.min(tx*stepX, Math.max(0, W-TW));
+    const y0 = Math.min(ty*stepY, Math.max(0, H-TH));
+    tctx.clearRect(0,0,TW,TH);
+    tctx.drawImage(cv, x0, y0, Math.min(TW, W-x0), Math.min(TH, H-y0),
+                       0, 0, Math.min(TW, W-x0), Math.min(TH, H-y0));
+    const d = tctx.getImageData(0,0,TW,TH).data;
+    // RGB, 0..1, in whichever layout the graph declared
+    const n = TW*TH;
+    const f = new Float32Array(3*n);
+    if(LAY === 'nhwc'){
+      for(let i=0;i<n;i++){
+        f[i*3]   = d[i*4]   / 255;
+        f[i*3+1] = d[i*4+1] / 255;
+        f[i*3+2] = d[i*4+2] / 255;
+      }
+    } else {
+      for(let i=0;i<n;i++){
+        f[i]     = d[i*4]   / 255;
+        f[n+i]   = d[i*4+1] / 255;
+        f[2*n+i] = d[i*4+2] / 255;
+      }
+    }
+    const feeds = {}; feeds[IN] = new ort.Tensor('float32', f,
+      LAY === 'nhwc' ? [1,TH,TW,3] : [1,3,TH,TW]);
+    const out = await sess.run(feeds);
+    const o = out[outName];
+    /* The output follows the same convention as the input, so its shape is read
+       the same way rather than assumed. */
+    const od = o.data;
+    let oh, ow, chans, ohwc;
+    if(o.dims.length >= 4){
+      const l3 = o.dims[3];
+      ohwc = (l3 === 1 || l3 === 2 || l3 === 3);
+      oh = ohwc ? o.dims[1] : o.dims[2];
+      ow = ohwc ? o.dims[2] : o.dims[3];
+      chans = ohwc ? o.dims[3] : o.dims[1];
+    } else {
+      oh = o.dims[o.dims.length-2]; ow = o.dims[o.dims.length-1]; chans = 1; ohwc = true;
+    }
+    const at = (c, y, x) => ohwc ? od[(y*ow + x)*chans + c] : od[c*oh*ow + y*ow + x];
+    for(let y=0; y<Math.min(TH, H-y0); y++) for(let x=0; x<Math.min(TW, W-x0); x++){
+      const sy = Math.min(oh-1, Math.round(y*oh/TH)), sx = Math.min(ow-1, Math.round(x*ow/TW));
+      let v;
+      if(chans >= 2){                      // logits per class: building is the last
+        const a = at(0, sy, sx), b = at(chans-1, sy, sx);
+        v = 1/(1+Math.exp(-(b-a)));
+      } else {
+        v = at(0, sy, sx);
+        if(v < 0 || v > 1) v = 1/(1+Math.exp(-v));        // logit -> probability
+      }
+      const i = (y0+y)*W + (x0+x);
+      acc[i] += v; hits[i] += 1;
+    }
+    done++;
+    progress && progress(`Reading the picture… tile ${done} of ${nx*ny}.`);
+  }
+  const prob = new Float32Array(W*H);
+  for(let i=0;i<W*H;i++) prob[i] = hits[i] ? acc[i]/hits[i] : 0;
+  return {prob, W, H};
+}
+/* Probability -> instances. Threshold, then 8-connected components, then throw
+   away anything too small to be a building at this ground resolution - a
+   two-pixel blob is not a house at any scale. */
+function instancesFromProb(prob, W, H, thr, minPx){
+  const on = new Uint8Array(W*H);
+  for(let i=0;i<W*H;i++) on[i] = prob[i] >= thr ? 1 : 0;
+  const lab = new Int32Array(W*H);
+  let n = 0; const st = [];
+  const sizes = [0];
+  for(let i=0;i<W*H;i++){
+    if(!on[i] || lab[i]) continue;
+    n++; st.length = 0; st.push(i); lab[i] = n; let sz = 0;
+    while(st.length){
+      const q = st.pop(); sz++;
+      const qx = q % W, qy = (q / W) | 0;
+      for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++){
+        if(!dx && !dy) continue;
+        const nx2 = qx+dx, ny2 = qy+dy;
+        if(nx2<0||ny2<0||nx2>=W||ny2>=H) continue;
+        const j = ny2*W+nx2;
+        if(on[j] && !lab[j]){ lab[j] = n; st.push(j); }
+      }
+    }
+    sizes.push(sz);
+  }
+  // drop the specks, renumber what is left
+  const keep = new Int32Array(n+1); let k = 0;
+  for(let i=1;i<=n;i++) keep[i] = sizes[i] >= minPx ? ++k : 0;
+  for(let i=0;i<W*H;i++) lab[i] = lab[i] ? keep[lab[i]] : 0;
+  return {own: lab, count: k};
+}
+
+/* ================= WHAT KIND OF FILE IS THIS =================
+   ONE TABLE DECIDES EVERYTHING: what we can read, what we can do with it, and
+   what the panel offers. It is here rather than scattered through the handlers
+   so that a user can be told, before anything happens, exactly what this app
+   will and will not do with the file they picked - including the formats it
+   recognises but cannot yet read, which is more useful than a silent failure.
+
+   Actions are named once and mean the same thing everywhere:
+
+     place     put it on the map at the right coordinates
+     snap      refine a hand placement against the imagery, by correlation
+     measure   the full area report for the ground it covers
+     export    mask, instances, GeoJSON, CSV, world files - on ITS grid
+     verify    score every published footprint against this image's own pixels
+     segment   run a building model on the picture itself
+     compare   its polygons against the published ones, per building
+     height    per-building height from 3D points
+*/
+const ACTIONS = {
+  place:   {label:'Place on the map',        why:'position it from its own coordinates'},
+  snap:    {label:'Snap to the imagery',     why:'refine the placement by correlation'},
+  measure: {label:'Measure this ground',     why:'the full area report for its footprint'},
+  export:  {label:'Export for this ground',  why:'mask and data on this file’s own pixel grid'},
+  verify:  {label:'Check the footprints',    why:'score published outlines against these pixels'},
+  segment: {label:'Find buildings in it',    why:'run a building model on the picture'},
+  compare: {label:'Compare with published',  why:'agree, missing, extra — per building'},
+  height:  {label:'Read heights',            why:'per-building height from the points'},
+};
+const FILE_KINDS = [
+  {ext:['tif','tiff'], kind:'raster-geo', label:'GeoTIFF',
+   note:'Read with geotiff.js. If it carries georeferencing we place it exactly; if not it '
+      + 'falls through to hand placement.',
+   actions:['place','measure','export','verify','segment'], ready:true},
+  {ext:['jpg','jpeg'], kind:'raster-exif', label:'JPEG',
+   note:'No map coordinates in the pixels, but a drone usually writes GPS into EXIF. Where '
+      + 'that exists we place it from there, then snap.',
+   actions:['place','snap','measure','export','verify','segment'], ready:true},
+  {ext:['png','webp','bmp','gif'], kind:'raster-plain', label:'Plain image',
+   note:'Carries no position at all. You place it, then snapping refines that against the '
+      + 'imagery — measured to 0.1 m from 33 m out.',
+   actions:['snap','measure','export','verify','segment'], ready:true},
+  {ext:['geojson','json'], kind:'vector', label:'GeoJSON',
+   note:'Your own polygons. Drawn on the map and scored building by building against the '
+      + 'published data — which agree, which are missing, which are extra.',
+   actions:['compare','export'], ready:true},
+  {ext:['kml'], kind:'vector-kml', label:'KML',
+   note:'Google Earth polygons. Converted to GeoJSON and treated the same.',
+   actions:['compare','export'], ready:true},
+  {ext:['csv','txt'], kind:'vector-csv', label:'CSV',
+   note:'Points or WKT polygons in columns. Latitude/longitude or a geometry column are '
+      + 'both understood.',
+   actions:['compare','export'], ready:true},
+  {ext:['kmz'], kind:'vector-kmz', label:'KMZ',
+   note:'A zipped KML. Not yet unpacked in the browser — unzip it and upload the .kml.',
+   actions:['compare'], ready:false},
+  {ext:['zip'], kind:'vector-shp', label:'Shapefile (zipped)',
+   note:'The GIS default. Not yet parsed — export it as GeoJSON and upload that.',
+   actions:['compare'], ready:false},
+  {ext:['gpkg'], kind:'vector-gpkg', label:'GeoPackage',
+   note:'A SQLite database. Not yet read in the browser — export a layer as GeoJSON.',
+   actions:['compare'], ready:false},
+  {ext:['las'], kind:'points', label:'LAS point cloud',
+   note:'The only file type that can give a real height PER BUILDING, rather than the 76 m '
+      + 'grid this app otherwise falls back to. Not yet parsed.',
+   actions:['height'], ready:false},
+  {ext:['laz'], kind:'points-laz', label:'LAZ point cloud',
+   note:'Compressed LAS. Decompression is heavy for a browser — convert to .las first.',
+   actions:['height'], ready:false},
+];
+function extOf(name){ const m = /\.([a-z0-9]+)$/i.exec(name || ''); return m ? m[1].toLowerCase() : ''; }
+function describeFile(file){
+  const ext = extOf(file.name);
+  for(const k of FILE_KINDS) if(k.ext.indexOf(ext) >= 0) return Object.assign({ext}, k);
+  return {ext, kind:'unknown', label:ext ? '.'+ext+' file' : 'file without an extension',
+    note:'Not a format this app reads. Images (GeoTIFF, JPEG, PNG), vectors (GeoJSON, KML, '
+       + 'CSV) and LAS point clouds are what it understands.',
+    actions:[], ready:false};
+}
+/* The panel is built from the SAME table, so what is offered and what is
+   possible cannot drift apart. */
+function kindPanel(file, k, extra){
+  const rows = k.actions.map(a => {
+    const A = ACTIONS[a];
+    return `<tr><td class="k">${A.label}</td><td class="v">${A.why}</td></tr>`;
+  }).join('');
+  return `<p class="bid">${file.name}</p>
+    <span class="chip">${k.label}</span>
+    <span class="chip">${(file.size/1024).toFixed(0)} KB</span>
+    ${k.ready ? '' : '<span class="chip" style="color:var(--estimated)">not yet readable</span>'}
+    <div class="grp"><h2>What this is</h2>
+      <p class="why" style="display:block;margin:0">${k.note}</p></div>
+    ${rows ? `<div class="grp"><h2>What can be done with it</h2><table>${rows}</table></div>` : ''}
+    ${extra || ''}`;
+}
+
 /* ================= UPLOAD YOUR OWN IMAGE =================
    THE POINT OF THIS, STATED PLAINLY. Every accuracy limit this project measured
    is a limit of OUR imagery: 0.31-0.5 m and +/-8.47 m for nine tenths of Earth,
@@ -3753,6 +4235,131 @@ async function basemapPatch(bb, W, H){
   return g;
 }
 
+/* ---- the model's reading of the picture, through the same pipeline ----
+   The output is an Int32Array of instance ids at the canvas size, which is
+   exactly what renderMasks() produces internally - so the seam, the two-colour
+   guarantee, the palette, the world file and the ZIP writer all apply unchanged.
+   Nothing here is special-cased. */
+let modelResult = null;      // {own, count, W, H, thr}
+function rasterFromOwn(own, W, H){
+  const pal = [];
+  let k = 0;
+  for(let i=0;i<W*H;i++) if(own[i] > k) k = own[i];
+  for(let i=1;i<=k;i++) pal.push(instColor(i));
+  let built = 0, seam = 0;
+  const cut = new Uint8Array(W*H);
+  if(SEPARATE_INSTANCES && k > 1){
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+      const i = y*W+x, o = own[i]; if(!o) continue;
+      let hit = 0;
+      for(let dy=-1; dy<=1 && !hit; dy++){ const yy=y+dy; if(yy<0||yy>=H) continue;
+        for(let dx=-1; dx<=1; dx++){ if(!dx&&!dy) continue;
+          const xx=x+dx; if(xx<0||xx>=W) continue;
+          const q = own[yy*W+xx]; if(q && q < o){ hit=1; break; } } }
+      if(hit) cut[i] = 1;
+    }
+  }
+  const mk = () => { const c=document.createElement('canvas'); c.width=W; c.height=H; return c; };
+  const binC = mk(), instC = mk();
+  const b = binC.getContext('2d'), n = instC.getContext('2d');
+  const bd = b.createImageData(W,H), nd = n.createImageData(W,H);
+  const bp = bd.data, np_ = nd.data;
+  for(let i=0,q=0;i<W*H;i++,q+=4){
+    const o = own[i]; if(o) built++;
+    const off = !o || cut[i];
+    if(off){ bp[q]=bp[q+1]=bp[q+2]=0; np_[q]=np_[q+1]=np_[q+2]=0; if(o) seam++; }
+    else { bp[q]=bp[q+1]=bp[q+2]=255;
+      const c = pal[o-1] || [255,255,255];
+      np_[q]=c[0]; np_[q+1]=c[1]; np_[q+2]=c[2]; }
+    bp[q+3]=np_[q+3]=255;
+  }
+  b.putImageData(bd,0,0); n.putImageData(nd,0,0);
+  return {binC, instC, W, H, gsd:0, nInst:k, builtFraction:built/(W*H), seam, proj:'deg'};
+}
+async function runModelOnOverlay(){
+  if(!overlay) return;
+  const note = t => { const e = document.getElementById('mdl-note'); if(e) e.innerHTML = t; };
+  const btn = document.getElementById('mdl-run');
+  if(btn){ btn.disabled = true; btn.textContent = 'Working…'; }
+  try{
+    const t0 = performance.now();
+    const {prob, W, H} = await segmentCanvas(overlay.canvas, note);
+    const gsd = (overlay.bb.e-overlay.bb.w)*Math.cos((overlay.bb.n+overlay.bb.s)/2*Math.PI/180)
+                *111320/overlay.W;
+    // nothing under 8 m² is a building; convert that to pixels at this scale
+    const minPx = Math.max(4, Math.round(8 / Math.max(1e-6, gsd*gsd)));
+    const {own, count} = instancesFromProb(prob, W, H, 0.5, minPx);
+    modelResult = {own, count, W, H, thr:0.5, ms:Math.round(performance.now()-t0), gsd, minPx};
+    // draw it over the map so it can be seen against the imagery
+    const R = rasterFromOwn(own, W, H);
+    if(map.getLayer('mdl-img')) map.removeLayer('mdl-img');
+    if(map.getSource('mdlsrc')) map.removeSource('mdlsrc');
+    map.addSource('mdlsrc', {type:'image', url:R.instC.toDataURL('image/png'),
+      coordinates:[[overlay.bb.w,overlay.bb.n],[overlay.bb.e,overlay.bb.n],
+                   [overlay.bb.e,overlay.bb.s],[overlay.bb.w,overlay.bb.s]]});
+    map.addLayer({id:'mdl-img', type:'raster', source:'mdlsrc', paint:{'raster-opacity':0.55}});
+    /* ⚠️ ALWAYS SCORED AGAINST THE PUBLISHED DATA, NEVER SHOWN ALONE. This
+       model's quality on dense informal fabric is unmeasured, and the published
+       record says that is exactly where such models fail. A number beside it is
+       the difference between a reading and a claim. */
+    dedupe();
+    const pub = uniqBy(buildingsIn(overlay.bb));
+    const pubR = renderMasks(overlay.bb, buildingsIn(overlay.bb),
+                             {W, H, proj:overlay.proj});
+    const pd = pubR.binC.getContext('2d').getImageData(0,0,W,H).data;
+    let both=0, onlyModel=0, onlyPub=0;
+    for(let i=0,q=0;i<W*H;i++,q+=4){
+      const m = own[i] > 0, p2 = pd[q] > 127;
+      if(m && p2) both++; else if(m) onlyModel++; else if(p2) onlyPub++;
+    }
+    const iou = (both+onlyModel+onlyPub) ? both/(both+onlyModel+onlyPub) : 0;
+    const m2 = gsd*gsd;
+    note(`<b>${count.toLocaleString()}</b> buildings read from your picture in
+      ${(modelResult.ms/1000).toFixed(1)} s.
+      <a href="#" id="mdl-off" style="color:var(--accent)">hide overlay</a>`);
+    const host = document.getElementById('mdl-cmp');
+    if(host) host.innerHTML = `<table>
+      ${fmtRow('From your image', `<span class="num">${count.toLocaleString()}</span> buildings`,
+        `at ${gsd.toFixed(2)} m per pixel, anything under 8 m² discarded`)}
+      ${fmtRow('Published here', `<span class="num">${pub.length.toLocaleString()}</span> buildings`,
+        'Google, Microsoft or OpenStreetMap, whichever leads on this ground')}
+      ${fmtRow('Agreement', `<span class="num">${(iou*100).toFixed(1)}</span> %<span class="tag t-part">IoU</span>`,
+        'ground both call a building, over ground either does')}
+      ${fmtRow('Only your image', `<span class="num">${(onlyModel*m2).toFixed(0)}</span> m²`,
+        'the model sees a building where no published source has one — either it is right '
+        + 'and they are missing it, or it is a false positive')}
+      ${fmtRow('Only published', `<span class="num">${(onlyPub*m2).toFixed(0)}</span> m²`,
+        'a published footprint with nothing under it in your picture — either they are '
+        + 'wrong, or the model missed it')}
+    </table>
+    <div class="note note-warn"><strong>This is a reading of your picture, not a fact about
+    the ground.</strong> The weights are public and general-purpose, trained on aerial
+    imagery; every published comparison names dense informal settlement as where such
+    models break down. Treat the agreement figure above as the measurement, and the count
+    as a proposal.</div>`;
+    on('mdl-off','click', e => { e.preventDefault();
+      if(map.getLayer('mdl-img')) map.removeLayer('mdl-img');
+      if(map.getSource('mdlsrc')) map.removeSource('mdlsrc');
+      note('Overlay hidden. The result is still ready to export.'); });
+  }catch(err){
+    note(`<span style="color:var(--estimated)">Could not run the model: ${String(err.message||err)}</span>`);
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = 'Find buildings in it'; }
+  }
+}
+async function exportModelResult(everything){
+  if(!modelResult || !overlay) return;
+  const R = rasterFromOwn(modelResult.own, modelResult.W, modelResult.H);
+  R.gsd = modelResult.gsd;
+  const bb = overlay.bb;
+  const feats = buildingsIn(bb);
+  const st = areaStats(bb, feats);
+  st.cover = R.builtFraction;
+  st.overlap = st.bcr > 0 ? Math.max(0, 1 - st.cover / st.bcr) : 0;
+  lastRaster = R; lastStats = st; lastFeats = feats; lastBox = bb;
+  await exportArea(bb, feats, st, everything, R);
+}
+
 /* ---- everything the app knows about this ground, on the upload's own grid ---- */
 async function exportForOverlay(everything){
   if(!overlay) return;
@@ -3810,14 +4417,28 @@ function overlayPanel(extra){
       GeoJSON, statistics CSV and world files.</span>
     </div>
 
+    <div class="grp"><h2>Read the picture itself</h2>
+      <div class="row" style="margin-bottom:7px">
+        <button id="mdl-run">Find buildings in it</button>
+        <button id="mdl-export">Export that</button>
+      </div>
+      <p class="segwhy" id="mdl-note">A public building-segmentation model (15 MB, downloaded
+        once) runs on your image in this browser. Everything above re-serves what someone else
+        traced; this is the one thing that looks at <em>your</em> pixels — which matters because
+        every limit in this app comes from imagery at 0.31–0.5 m, and your file may be far
+        finer.</p>
+      <div id="mdl-cmp"></div>
+    </div>
+
     <div class="note note-info"><strong>Your file stayed on this machine.</strong>
-    There is no server in this application to upload it to. What comes back is the
-    published data for that ground, not a reading of your picture — segmenting the
-    image itself needs a model, which is the next thing this is built for.</div>`;
+    There is no server in this application to upload it to. The model is downloaded
+    <em>to</em> the picture, not the other way round.</div>`;
 }
 function wireOverlayPanel(){
   on('up-all','click', ()=>exportForOverlay(true));
   on('up-mask','click', ()=>exportForOverlay(false));
+  on('mdl-run','click', runModelOnOverlay);
+  on('mdl-export','click', ()=>exportModelResult(true));
   on('up-report','click', e=>{ e.preventDefault();
     drawBox2(overlay.bb); areaReport(overlay.bb); });
   on('up-snap','click', e=>{ e.preventDefault(); snapOverlay(); });
@@ -3835,10 +4456,16 @@ on('tif','change', async (ev) => {
   const body = document.getElementById('body');
   const say = html => { body.innerHTML = html; };
   say(`<p class="bid">${file.name}</p><p class="empty">Reading…</p>`);
-  const isTiff = /\.tiff?$/i.test(file.name) || /tiff/i.test(file.type || '');
+  const kind = describeFile(file);
   try{
-    if(isTiff) await loadGeoTiffFile(file, say);
-    else await loadPlainImage(file, say);
+    if(!k_ready(kind)){ say(kindPanel(file, kind,
+      `<div class="note note-warn"><strong>Nothing to do with this one yet.</strong>
+       ${kind.kind === 'unknown' ? 'Try a GeoTIFF, JPEG, PNG, GeoJSON, KML or CSV.'
+         : 'The format is recognised — it is the reader that is missing.'}</div>`)); return; }
+    if(kind.kind === 'raster-geo')                      await loadGeoTiffFile(file, say, kind);
+    else if(kind.kind.indexOf('raster') === 0)          await loadPlainImage(file, say, kind);
+    else if(kind.kind.indexOf('vector') === 0)          await loadVectorFile(file, say, kind);
+    else say(kindPanel(file, kind, ''));
   }catch(err){
     say(`<p class="bid">${file.name}</p>
       <div class="note note-warn"><strong>Could not read this file.</strong>
@@ -3846,7 +4473,8 @@ on('tif','change', async (ev) => {
   }
 });
 
-async function loadGeoTiffFile(file, say){
+function k_ready(k){ return k && k.ready; }
+async function loadGeoTiffFile(file, say, kind){
   const GT = await loadGeoTIFF();
   const buf = await file.arrayBuffer();
   const tif = await GT.fromArrayBuffer(buf);
@@ -3914,7 +4542,7 @@ async function decodeTiff(img, W, H){
 /* A plain photograph has no coordinates, so the user places it. It lands across
    the current view - which is why the panel says to move the map to the right
    place first - and can then be nudged onto the imagery by correlation. */
-async function loadPlainImage(file, say){
+async function loadPlainImage(file, say, kind){
   const url = URL.createObjectURL(file);
   const im = await new Promise((res, rej) => {
     const i = new Image(); i.onload = () => res(i);
@@ -3927,13 +4555,31 @@ async function loadPlainImage(file, say){
   cv.height = Math.max(1, Math.round(im.height*scale));
   cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
   URL.revokeObjectURL(url);
-  // sit it in the middle of the view, keeping its aspect ratio
+  /* EXIF FIRST. A drone writes where it was, and often how high it flew; with a
+     rough field of view that gives a footprint rather than a guess. Only when
+     there is nothing does the image land in the middle of the view. */
+  let exif = null;
+  if(/jpe?g$/i.test(file.name)){
+    try { exif = readEXIF(await file.arrayBuffer()); } catch(e){ exif = null; }
+  }
   const b = map.getBounds();
-  const cw = (b.getEast()-b.getWest())*0.6, ch = cw * (cv.height/cv.width)
-             * Math.cos(map.getCenter().lat*Math.PI/180);
-  const c = map.getCenter();
-  placeOverlay(cv, {w:c.lng-cw/2, e:c.lng+cw/2, s:c.lat-ch/2, n:c.lat+ch/2},
-               file.name, 'deg', false);
+  let cw, ch, cx, cy;
+  if(exif){
+    // ~84° diagonal is typical for a consumer drone camera; altitude gives scale
+    const span = exif.altitude && exif.altitude > 5 ? 2*exif.altitude*Math.tan(42*Math.PI/180) : 200;
+    const latm = exif.lat;
+    cw = span / (Math.cos(latm*Math.PI/180)*111320);
+    ch = span * (cv.height/cv.width) / 110540;
+    cx = exif.lng; cy = exif.lat;
+    map.jumpTo({center:[cx, cy], zoom: 18});
+  } else {
+    cw = (b.getEast()-b.getWest())*0.6;
+    ch = cw * (cv.height/cv.width) * Math.cos(map.getCenter().lat*Math.PI/180);
+    const c0 = map.getCenter(); cx = c0.lng; cy = c0.lat;
+  }
+  placeOverlay(cv, {w:cx-cw/2, e:cx+cw/2, s:cy-ch/2, n:cy+ch/2},
+               file.name, 'deg', !!exif);
+  overlay.exif = exif;
   say(overlayPanel(`<div class="note note-warn"><strong>This file has no coordinates.</strong>
     A JPEG or PNG carries no position, and working out where a photograph was taken from the
     picture alone needs a trained model and a planet-wide reference index — not something a
