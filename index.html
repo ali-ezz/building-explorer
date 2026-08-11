@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Global Building Explorer</title>
+<title>Global Earth Explorer</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0e13'/%3E%3Cg fill='none' stroke='%235aa9e6' stroke-width='2'%3E%3Crect x='6' y='13' width='9' height='13'/%3E%3Crect x='17' y='7' width='9' height='19'/%3E%3C/g%3E%3C/svg%3E">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
@@ -146,8 +146,16 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
 
 /* ---- layer stack ---- */
 .lyrs{padding:11px 18px;border-bottom:1px solid var(--line)}
-.lyrs h2{margin:0 0 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
+.lyrs h2{margin:0 0 7px;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
   color:var(--faint);font-weight:700}
+/* Every block after the first gets the same separation, from ONE rule. The
+   previous panel set margin-top inline on each h2, so the spacing drifted every
+   time a section moved and two of them disagreed by 1px. */
+.lyrs > h2 + *{margin-top:0}
+.lyrs > h2:not(:first-child){margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft)}
+.lyrs .segwhy{margin-top:7px}
+#areatools .row{margin-top:8px}
+#srcblock[hidden]{display:none}
 .lyr{display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:12px;
   user-select:none;-webkit-user-select:none}
 .lyr:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
@@ -246,8 +254,8 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
   <aside>
     <div class="grab" id="grab" aria-label="Drag to resize panel"><i></i></div>
     <header>
-      <h1>Global Building Explorer</h1>
-      <p class="sub">Every building on Earth · streamed, not stored</p>
+      <h1>Global Earth Explorer</h1>
+      <p class="sub">Buildings, land and water · streamed, never stored</p>
     </header>
     <div class="tools">
       <div class="field">
@@ -262,49 +270,47 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       <div class="capnote" id="capnote"></div>
       <div class="row">
         <button id="upload">Upload image</button>
-      </div>
-      <input type="file" id="tif" accept=".tif,.tiff,image/tiff" hidden>
-      <div class="row">
         <button id="theme">Dark</button>
       </div>
+      <input type="file" id="tif" accept=".tif,.tiff,image/tiff" hidden>
     </div>
     <div class="lyrs">
-      <h2>Buildings</h2>
-      <div class="seg" id="drawmode" role="radiogroup" aria-label="Where to draw building outlines">
+      <h2>Show</h2>
+      <div class="seg" id="drawmode" role="radiogroup" aria-label="How to show the active class">
         <button role="radio" aria-checked="true"  data-scope="all">Everywhere</button>
         <button role="radio" aria-checked="false" data-scope="sel">In selection</button>
         <button role="radio" aria-checked="false" data-scope="off">Off</button>
       </div>
       <p class="segwhy" id="drawwhy"></p>
       <div id="areatools" hidden>
-        <div class="row" style="margin-top:8px">
+        <div class="row">
           <button id="area">Draw area</button>
           <button id="areaclear">Clear</button>
         </div>
-        <p class="segwhy" id="areahint">Drag on the map to draw a rectangle.
-          Escape cancels.</p>
+        <p class="segwhy" id="areahint">Drag on the map to draw a rectangle. Escape cancels.</p>
       </div>
 
-      <h2 style="margin-top:13px">Sources</h2>
-      <div class="seg" id="srcmode" role="radiogroup" aria-label="Which building sources to show">
-        <button role="radio" aria-checked="true"  data-mode="auto">Auto</button>
-        <button role="radio" aria-checked="false" data-mode="pick">Select</button>
-      </div>
-      <div id="srcpick" hidden></div>
-      <p class="segwhy" id="srcwhy"></p>
-
-      <h2 style="margin-top:13px">Context</h2>
+      <h2>Class</h2>
       <div id="ctxlist"></div>
       <p class="segwhy" id="ctxwhy"></p>
 
-      <h2 style="margin-top:13px">Labels</h2>
+      <div id="srcblock">
+        <h2>Building sources</h2>
+        <div class="seg" id="srcmode" role="radiogroup" aria-label="Which building sources to show">
+          <button role="radio" aria-checked="true"  data-mode="auto">Auto</button>
+          <button role="radio" aria-checked="false" data-mode="pick">Select</button>
+        </div>
+        <div id="srcpick" hidden></div>
+        <p class="segwhy" id="srcwhy"></p>
+      </div>
+
+      <h2>Labels</h2>
       <div id="lyrlist"></div>
     </div>
     <div id="status">Loading…</div>
-    <div id="body"><p class="empty"><strong>Click any building</strong> to read its record —
-      footprint, touching neighbours, street access, height and floors. Or
-      <strong>Select area</strong> to measure a neighbourhood and export its
-      two-colour mask. Computed live, anywhere on Earth.</p></div>
+    <div id="body"><p class="empty"><strong>Click anything on the map</strong> to read what
+      is published about it. Choose <strong>In selection</strong> above to draw an area,
+      measure it, and export its two-colour mask. Computed live, anywhere on Earth.</p></div>
     <div class="legend">
       <span><i style="background:var(--measured)"></i>measured</span>
       <span><i style="background:var(--estimated)"></i>estimated</span>
@@ -750,10 +756,19 @@ map.addControl(new maplibregl.AttributionControl({compact:true}), 'bottom-right'
 // MapLibre opens the compact attribution EXPANDED on first load, which covered 370
 // of 390 px on a phone. Collapse it; the (i) still opens it, so the licence credit
 // stays one tap away as the licences require.
-map.on('load', ()=>{
+/* MapLibre ships the compact attribution OPEN. Removing the class was not
+   enough - the element is a <details> and it renders with the `open` attribute,
+   so it stayed expanded and covered the corner of the map on every device.
+   Both have to go, and it is done on load AND on the first idle because the
+   control is rebuilt when sources finish attaching their attribution. */
+function collapseAttrib(){
   const a = document.querySelector('.maplibregl-ctrl-attrib');
-  if(a) a.classList.remove('maplibregl-compact-show');
-});
+  if(!a) return;
+  a.classList.remove('maplibregl-compact-show');
+  if(a.tagName === 'DETAILS') a.removeAttribute('open');
+}
+map.on('load', collapseAttrib);
+map.once('idle', collapseAttrib);
 
 /* ---------- imagery year ---------- */
 const yr=document.getElementById('yr'), yrv=document.getElementById('yrv');
@@ -1040,17 +1055,24 @@ document.addEventListener('keydown', e => {
    be fixed by rendering it differently, so it ships labelled rather than
    quietly. The building footprints at ~0.3 m remain the only fine-grained
    classification on this map. */
+/* CLASS is now the single question the panel asks: what am I looking at?
+   Buildings sit in this list with everything else, because they ARE a class -
+   keeping them outside it was what made the panel read as two half-designs
+   stapled together. "None" is gone because Show > Off already says it, and two
+   controls for one idea is what made the last version confusing. */
 const CONTEXT = [
-  {key:'none',      label:'None',       ids:[],                      dot:null},
-  {key:'landcover', label:'Land cover', ids:['lc-fill'],             dot:'#2f7d4f',
+  {key:'buildings', label:'Buildings', ids:[], dot:'#5aa9e6', building:true,
+   why:'Google Open Buildings + Microsoft and Overture, about 0.3 m. The only '
+     + 'fine-grained layer here, and the subject of this map.'},
+  {key:'landcover', label:'Land cover', ids:['lc-fill'], dot:'#2f7d4f',
    why:'Vectorised ESA WorldCover, 11 classes at 10 m. Published accuracy 65% — '
      + 'the weakest of the three global products, and weakest of all on informal '
-     + 'fabric. One pixel is about the size of one Imbaba building.'},
-  {key:'water',     label:'Water',      ids:['wat-fill','wat-line'], dot:'#2d7fd3',
+     + 'fabric. One pixel is about the width of one Imbaba building.'},
+  {key:'water',     label:'Water', ids:['wat-fill','wat-line'], dot:'#2d7fd3',
    why:'Rivers, lakes, reservoirs and canals. Water is the most reliably mapped '
      + 'class in every published comparison, at about 92%.'},
 ];
-let ctxKey = 'none';
+let ctxKey = 'buildings';
 
 const LAYERS = [
   {key:'roads',     label:'Road names',  src:'Overture',
@@ -1065,9 +1087,6 @@ function setLayer(cfg, on){
   const el = document.querySelector(`.lyr[data-key="${cfg.key}"]`);
   if(el) el.setAttribute('aria-pressed', on ? 'true' : 'false');
 }
-const CTX_OPACITY = {'lc-fill':0.28,'wat-fill':0.42,'wat-line':0.9};
-// retired from the UI but still fetched, because the area report reads them
-const CTX_DORMANT = ['land-fill','lu-fill','lu-line','infra-line','plc-dot'];
 /* THESE HIDE BY OPACITY, NOT BY visibility, AND THE REASON IS NOT COSMETIC.
    MEASURED: querySourceFeatures returns NOTHING for a layer set to
    visibility:none - MapLibre stops keeping tiles for layers it is not drawing.
@@ -1075,35 +1094,38 @@ const CTX_DORMANT = ['land-fill','lu-fill','lu-line','infra-line','plc-dot'];
    being painted, and reported "none" the moment you turned them off. Holding
    them visible at zero opacity keeps the tiles loaded, so the report can answer
    "what is on this ground" regardless of what is currently on screen. */
+const CTX_OPACITY = {'lc-fill':0.28,'wat-fill':0.42,'wat-line':0.9};
+const CTX_DORMANT = ['land-fill','lu-fill','lu-line','infra-line','plc-dot'];
+function ctxIsBuildings(){ return ctxKey === 'buildings'; }
+/* Hidden by OPACITY, never by visibility: querySourceFeatures returns nothing
+   for a layer at visibility:none, because MapLibre stops keeping its tiles, and
+   the area report has to be able to count what is on the ground whether or not
+   it is currently painted. */
+function paintCtx(id, o){
+  if(!map.getLayer(id)) return;
+  map.setLayoutProperty(id,'visibility','visible');
+  const prop = id.endsWith('-line') ? 'line-opacity'
+             : id.endsWith('-dot')  ? 'circle-opacity' : 'fill-opacity';
+  map.setPaintProperty(id, prop, o);
+  if(id === 'plc-dot') map.setPaintProperty(id,'circle-stroke-opacity', o ? 1 : 0);
+}
 function setContext(key){
   ctxKey = key;
-  // dormant layers stay loaded so the report can still count them, but are
-  // never painted and never clickable
-  for(const id of CTX_DORMANT){
-    if(!map.getLayer(id)) continue;
-    map.setLayoutProperty(id,'visibility','visible');
-    const prop = id.endsWith('-line') ? 'line-opacity'
-               : id.endsWith('-dot')  ? 'circle-opacity' : 'fill-opacity';
-    map.setPaintProperty(id, prop, 0);
-    if(id === 'plc-dot') map.setPaintProperty(id,'circle-stroke-opacity', 0);
-  }
+  for(const id of CTX_DORMANT) paintCtx(id, 0);
   for(const c of CONTEXT){
-    const on = c.key === key;
-    for(const id of c.ids){
-      if(!map.getLayer(id)) continue;
-      map.setLayoutProperty(id,'visibility','visible');
-      const prop = id.endsWith('-line') ? 'line-opacity'
-                 : id.endsWith('-dot')  ? 'circle-opacity' : 'fill-opacity';
-      map.setPaintProperty(id, prop, on ? CTX_OPACITY[id] : 0);
-      if(id === 'plc-dot') map.setPaintProperty(id,'circle-stroke-opacity', on ? 1 : 0);
-    }
+    const active = c.key === key;
+    for(const id of c.ids)
+      paintCtx(id, active && drawScope !== 'off' ? CTX_OPACITY[id] : 0);
     const el = document.querySelector(`.ctx[data-key="${c.key}"]`);
-    if(el) el.setAttribute('aria-checked', String(on));
+    if(el) el.setAttribute('aria-checked', String(active));
   }
   const why = document.getElementById('ctxwhy');
   const cur = CONTEXT.find(c=>c.key===key);
-  if(why) why.textContent = cur && cur.why ? cur.why
-    : 'One at a time — stacking them hides the imagery and makes every click ambiguous.';
+  if(why) why.textContent = cur ? cur.why : '';
+  // building-only controls have no meaning while another class is active
+  const sb = document.getElementById('srcblock');
+  if(sb) sb.hidden = !ctxIsBuildings();
+  applyDrawScope();
 }
 function buildLayerUI(){
   const ctx = document.getElementById('ctxlist');
@@ -1111,8 +1133,7 @@ function buildLayerUI(){
     ctx.innerHTML = CONTEXT.map(c =>
       `<div class="lyr ctx" role="radio" tabindex="0" data-key="${c.key}"
             aria-checked="${c.key===ctxKey}" aria-label="${c.label}">
-         <i class="sw rad"></i>${c.dot?`<i class="dot" style="background:${c.dot}"></i>`
-                                     :`<i class="dot" style="background:transparent"></i>`}
+         <i class="sw rad"></i><i class="dot" style="background:${c.dot}"></i>
          <span>${c.label}</span>
        </div>`).join('');
     for(const c of CONTEXT){
@@ -2389,7 +2410,7 @@ function exportVisible(feats, filename){
    handler behaves the same way. Invisible things must not be clickable, so the
    same rule that decides what is DRAWN now decides what is HITTABLE. */
 function isHittable(f){
-  if(drawScope === 'off') return false;
+  if(drawScope === 'off' || !ctxIsBuildings()) return false;
   if(f.source === 'bld' && !showVida) return false;
   if(f.source === 'ovt' && !showOvt)  return false;
   if(drawScope === 'sel'){
@@ -2738,7 +2759,7 @@ let drawScope = 'all';
 function opacityExpr(id){
   const base = BASE_OP[id];
   const srcOn = id.startsWith('bld') ? showVida : showOvt;
-  if(drawScope === 'off' || !srcOn) return 0;
+  if(drawScope === 'off' || !srcOn || !ctxIsBuildings()) return 0;
   const lit = provOn ? (id.endsWith('fill') ? 0.22 : 0.9) : base;
   if(drawScope !== 'sel') return provOn ? lit : dupCase(base);
   // outside the selection the outline is GONE, not dimmed - a faint outline
@@ -2761,16 +2782,24 @@ function applyDrawScope(){
   const seg = document.getElementById('drawmode');
   if(seg) for(const b of seg.querySelectorAll('button'))
     b.setAttribute('aria-checked', String(b.dataset.scope === drawScope));
+  const cur = CONTEXT.find(c=>c.key===ctxKey);
+  const name = cur ? cur.label.toLowerCase() : 'this class';
   const why = document.getElementById('drawwhy');
   if(why) why.textContent =
-    drawScope === 'all' ? 'Every building in view. At wide zooms that is tens of thousands of outlines over the imagery.'
-  : drawScope === 'off' ? 'Imagery only. Nothing is outlined and nothing can be clicked.'
-  : (lastBox ? 'Only the buildings inside your selected area.' : 'Draw an area below to choose which buildings are shown.');
-  // the area tools BELONG to this mode, so they appear with it rather than
-  // living as a button that is meaningless in the other two modes
+    drawScope === 'all' ? `All ${name} in view. At wide zooms that can be tens of thousands of shapes over the imagery.`
+  : drawScope === 'off' ? `Imagery only. Nothing is drawn and nothing can be clicked.`
+  : (lastBox ? `Only the ${name} inside your selected area.`
+             : `Draw an area below to choose which ${name} are shown.`);
   const tools = document.getElementById('areatools');
   if(tools) tools.hidden = drawScope !== 'sel';
   if(!map.getLayer('bld-fill')) return;
+  // non-building classes follow the same three states, by opacity
+  for(const c of CONTEXT){
+    if(c.building) continue;
+    const active = c.key === ctxKey;
+    for(const id of c.ids)
+      paintCtx(id, active && drawScope !== 'off' ? CTX_OPACITY[id] : 0);
+  }
   markInSelection();
   for(const id of BLD_DRAW)
     if(map.getLayer(id))
@@ -3021,7 +3050,7 @@ map.on('load', refresh);
 // colours were never re-applied. Run it again once there are layers to colour.
 map.on('load', applyTheme);
 map.on('load', ()=>{ buildLayerUI(); for(const c of LAYERS) setLayer(c, c.on);
-  setContext('none'); applySrcMode(); applyDrawScope(); });
+  applySrcMode(); setContext('buildings'); });
 </script>
 </body>
 </html>
