@@ -301,6 +301,10 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       <div class="capnote" id="capnote"></div>
       <div class="row"><button id="sharp">Sharpest here</button></div>
       <p class="segwhy" id="sharpnote"></p>
+      <p class="segwhy" id="sharphint">Searches Esri's archive for the best picture of
+        <em>this</em> ground — 14 of 196 releases, about 20 seconds. Newest is a
+        publication order, not a quality order: over Kibera the archive holds imagery
+        1.6× sharper and twice as well placed as the one on screen.</p>
       <div class="row">
         <button id="upload">Upload image</button>
         <button id="theme">Dark</button>
@@ -732,6 +736,7 @@ yr.addEventListener('input', ()=>{
   // setTiles swaps the URL on the existing source; adding/removing sources races
   // with in-flight tile loads (see the Leaflet version of this same bug).
   sharpFrame = null;
+  lastCapture = null;              // belongs to the year we just left
   const sn = document.getElementById('sharpnote'); if(sn) sn.textContent = '';
   map.getSource('sat').setTiles([wbUrl(YEARS[yearIdx])]);
   // Fade the outlines as the imagery moves away from the building vintage.
@@ -1044,6 +1049,7 @@ function buildLayerUI(){
    fetch() exposes the post-redirect URL, so the capture is resolved for the tile
    under the map centre and years sharing an id are reported as the same photograph. */
 const capCache = new Map();
+let lastCapture = null;   // the imagery record for the current view and year
 function centreTile(){
   const c = map.getCenter(), z = Math.min(Math.max(Math.round(map.getZoom()), 10), 17);
   const n = 2 ** z;
@@ -1065,6 +1071,14 @@ async function captureOf(year, t){
 let capSeq = 0;
 async function reportCapture(){
   const seq = ++capSeq, t = centreTile(), year = YEARS[yearIdx];
+  /* CLEARED FIRST, NOT LEFT TO BE OVERWRITTEN. Every early return below used to
+     leave the previous year's note on screen: slide to 2020 where the capture
+     id will not resolve and the note went on insisting "taken 4/30/2025 ·
+     0.31 m/px · WV03" — 2026's picture, described under 2020 — while the status
+     line beside it had already fallen back to "2020 release". Two lines of the
+     same panel disagreeing because one of them failed silently. */
+  const el0 = document.getElementById('capnote');
+  if(el0) el0.textContent = '';
   const id = await captureOf(year, t);
   if(seq !== capSeq || !id) return;             // a newer request overtook this one
   const same = [];
@@ -1085,6 +1099,8 @@ async function reportCapture(){
   const c = map.getCenter();
   const m = await imageryMeta(c.lng, c.lat, year);
   if(seq !== capSeq) return;
+  lastCapture = m;
+  refresh();                       // the status line quotes this
   if(!m){ el.textContent = collide; return; }
   const bits = [];
   if(m.captured) bits.push('taken ' + m.captured);
@@ -1248,6 +1264,8 @@ async function findSharpest(){
   const btn = document.getElementById('sharp');
   const say = t => { const e = document.getElementById('sharpnote'); if(e) e.innerHTML = t; };
   if(btn){ btn.disabled = true; btn.textContent = 'Searching…'; }
+  const hint = document.getElementById('sharphint');
+  if(hint) hint.hidden = true;                 // the note replaces it while running
   try{
     const all = await loadWayback();
     const c = map.getCenter();
@@ -1715,7 +1733,18 @@ function refresh(){
       ? `<span class="skel"></span> counting buildings…`
       : `<b>${f.length.toLocaleString()}</b> buildings in view`
         + (settled ? '' : ` <span style="color:var(--faint)">· still loading</span>`);
-  el.innerHTML = head + ` · imagery <b>${YEARS[yearIdx]}</b>` + sourceWarning();
+  /* THE STATUS LINE SAID "imagery 2026" WHILE THE NOTE SIX LINES ABOVE SAID
+     "taken 4/30/2025". Both were rendered from the same app, at the same
+     moment, about the same picture. The slider year is the Wayback RELEASE;
+     the capture date is when the shutter opened. Now that the real date is
+     known, the release year has nothing left to say, so the line quotes the
+     capture date when it has one and falls back to the release year when the
+     metadata service has not answered yet. */
+  const im = lastCapture;
+  const when = im && im.captured
+    ? `<b>${im.captured}</b>`
+    : `<b>${YEARS[yearIdx]}</b> <span style="color:var(--faint)">release</span>`;
+  el.innerHTML = head + ` · imagery ${when}` + sourceWarning();
   updateExport(f.length);
 }
 /* true from the moment the camera moves until the map reports idle - the
