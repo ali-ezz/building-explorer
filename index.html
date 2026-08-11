@@ -71,10 +71,12 @@ aside{width:392px;flex:0 0 392px;background:var(--panel);
   #body{padding:14px 16px 28px;-webkit-overflow-scrolling:touch}
   td{padding:11px 0}
   .s-item{padding:13px 11px}
-  .legend{padding:10px 16px 14px}
+  /* the About link was a 20 px tap target — the same defect this project has
+     already fixed twice on other controls, reappearing on a new one */
+  .foot{padding:4px 16px 6px}
+  .foot a{min-height:44px;display:inline-flex;align-items:center}
   .maplibregl-ctrl-bottom-right{bottom:calc(var(--sheet,42vh) + 6px)}
   .maplibregl-ctrl-bottom-left{bottom:calc(var(--sheet,42vh) + 6px)}
-  .maplibregl-ctrl-attrib.maplibregl-compact-show{max-width:calc(100vw - 24px)}
   .maplibregl-ctrl-top-left{top:6px}
 }
 @media (min-width:821px){ .grab{display:none} }
@@ -149,14 +151,22 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
 .lyrs{padding:11px 18px;border-bottom:1px solid var(--line)}
 .lyrs h2{margin:0 0 7px;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
   color:var(--faint);font-weight:700}
-/* Every block after the first gets the same separation, from ONE rule. The
-   previous panel set margin-top inline on each h2, so the spacing drifted every
-   time a section moved and two of them disagreed by 1px. */
+/* Every block after the first gets the same separation, from ONE rule, whether
+   the heading is a direct child of .lyrs or the first thing inside a section
+   wrapper. The previous panel set margin-top inline on each h2, so the spacing
+   drifted every time a section moved and two of them disagreed by 1px — and the
+   wrapped sections (Area, Export, Sources) matched no rule at all and ran
+   straight into the block above them. */
 .lyrs > h2 + *{margin-top:0}
-.lyrs > h2:not(:first-child){margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft)}
+.lyrs > h2:not(:first-child),
+.lyrs > div:not(:first-child) > h2:first-child{
+  margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft)}
+.lyrs > div:not(:first-child) > h2:first-child{margin-bottom:7px}
 .lyrs .segwhy{margin-top:7px}
-#areatools .row{margin-top:8px}
-#srcblock[hidden]{display:none}
+#areatools .row, #exblock .row{margin-top:8px}
+#areatools[hidden], #exblock[hidden], #srcblock[hidden]{display:none}
+#extarget{margin-top:0}
+#exblock button[disabled]{opacity:.4;cursor:not-allowed}
 .lyr{display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:12px;
   user-select:none;-webkit-user-select:none}
 .lyr:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
@@ -194,8 +204,9 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
   .lyr{padding:12px 0;min-height:44px} .lyr .sw{width:17px;height:17px}
 }
 
-#status{padding:11px 18px;border-bottom:1px solid var(--line);font-size:11.5px;
-  color:var(--dim);line-height:1.6}
+/* pinned under the header, outside #scroll, so the count never scrolls away */
+#status{flex:none;padding:10px 18px;border-bottom:1px solid var(--line);
+  font-size:11.5px;color:var(--dim);line-height:1.6}
 #status b{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
 #status a{color:var(--accent);text-decoration:none}
 #status a:hover{text-decoration:underline}
@@ -245,11 +256,17 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
 @keyframes sh{0%{background-position:100% 50%}100%{background-position:0 50%}}
 @media (prefers-reduced-motion:reduce){.skel{animation:none}}
 
-.legend{padding:11px 18px;border-top:1px solid var(--line);font-size:10.5px;
-  color:var(--faint);display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-.legend i{width:7px;height:7px;border-radius:2px;display:inline-block;margin-right:5px}
-.maplibregl-ctrl-attrib{font-size:9.5px}
-.maplibregl-ctrl-attrib a{color:var(--dim)}
+/* The panel footer IS the attribution. MapLibre's own AttributionControl was
+   removed: in compact mode it renders a <details>/<summary> toggle button over
+   the map corner, which is one more control asking to be pressed for something
+   the panel already says permanently. A line that is always readable satisfies
+   the licences better than a button that hides it. */
+.foot{padding:10px 18px;border-top:1px solid var(--line);font-size:10.5px;
+  color:var(--faint);display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;
+  justify-content:space-between}
+.foot .cred{flex:1 1 auto;min-width:0}
+.foot a{color:var(--dim);white-space:nowrap;padding:2px 0}
+.foot a:hover{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -262,9 +279,14 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
   <aside>
     <div class="grab" id="grab" aria-label="Drag to resize panel"><i></i></div>
     <header>
-      <h1>Global Earth Explorer</h1>
-      <p class="sub">Buildings, land and water · streamed, never stored</p>
+      <h1>Building Explorer</h1>
+      <p class="sub">Published footprints, measured live · anywhere on Earth</p>
     </header>
+    <!-- THE COUNT SITS DIRECTLY UNDER THE TITLE, not at the bottom of the
+         controls. It is the one fact that answers "what am I looking at", and
+         it was three sections and a scroll away from the heading it belongs
+         to. It stays put while the controls below it scroll. -->
+    <div id="status">Loading…</div>
     <div id="scroll">
     <div class="tools">
       <div class="field">
@@ -284,19 +306,34 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       <input type="file" id="tif" accept=".tif,.tiff,image/tiff" hidden>
     </div>
     <div class="lyrs">
-      <h2>Show</h2>
-      <div class="seg" id="drawmode" role="radiogroup" aria-label="How to show the active class">
+      <h2>Outlines</h2>
+      <div class="seg" id="drawmode" role="radiogroup" aria-label="Where to draw building outlines">
         <button role="radio" aria-checked="true"  data-scope="all">Everywhere</button>
         <button role="radio" aria-checked="false" data-scope="sel">In selection</button>
         <button role="radio" aria-checked="false" data-scope="off">Off</button>
       </div>
       <p class="segwhy" id="drawwhy"></p>
-      <div id="areatools" hidden>
+
+      <div id="areatools">
+        <h2>Area</h2>
         <div class="row">
-          <button id="area">Draw area</button>
+          <button id="area">Select area</button>
           <button id="areaclear">Clear</button>
         </div>
-        <p class="segwhy" id="areahint">Drag on the map to draw a rectangle. Escape cancels.</p>
+        <p class="segwhy" id="areahint">Drag a rectangle on the map. Escape cancels.</p>
+      </div>
+
+      <div id="exblock">
+        <h2>Export</h2>
+        <p class="segwhy" id="extarget"></p>
+        <div class="row">
+          <button id="ex-all">Download all</button>
+          <button id="ex-mask">Mask only</button>
+        </div>
+        <p class="segwhy">One ZIP: the two-colour mask, a colour-coded instance mask,
+          the footprints as GeoJSON, every statistic as CSV, and world files so the
+          images land in the right place in QGIS. Built in your browser — nothing is
+          uploaded, and the README names every file in the archive.</p>
       </div>
 
       <div id="srcblock">
@@ -312,22 +349,19 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
           <input type="range" id="conf" min="0" max="90" value="0" step="5">
           <output id="confv">off</output>
         </div>
-        <p class="segwhy">Google publishes a confidence per building. F37 measured
-          filtering on it as the biggest single accuracy gain this project found.
-          Raising it drops uncertain outlines — and takes real buildings with them.</p>
+        <p class="segwhy">Google publishes a confidence score per building. Filtering on
+          it is the single largest accuracy gain measured on this project. Raise it and
+          uncertain outlines go — along with some real buildings.</p>
       </div>
 
     </div>
-    <div id="status">Loading…</div>
-    <div id="body"><p class="empty"><strong>Click anything on the map</strong> to read what
-      is published about it. Choose <strong>In selection</strong> above to draw an area,
-      measure it, and export its two-colour mask. Computed live, anywhere on Earth.</p></div>
+    <div id="body"><p class="empty"><strong>Click any building</strong> to read everything
+      its publisher records about it, or <strong>Select area</strong> to measure a
+      neighbourhood and export its mask.</p></div>
     </div>
-    <div class="legend">
-      <span><i style="background:var(--measured)"></i>measured</span>
-      <span><i style="background:var(--estimated)"></i>estimated</span>
-      <span><i style="background:var(--absent)"></i>unavailable</span>
-      <span style="margin-left:auto"><a href="#" id="about" style="color:var(--dim)">About the data</a></span>
+    <div class="foot">
+      <span class="cred">Esri · Google · Microsoft · VIDA · Overture · OpenStreetMap</span>
+      <a href="#" id="about">About the data</a>
     </div>
   </aside>
 </div>
@@ -349,23 +383,31 @@ const PMTOVT = 'https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com
 const TILEBASE = 'https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-07-22.0/';
 const PMTROAD  = TILEBASE + 'transportation.pmtiles';
 const PMTDIV   = TILEBASE + 'divisions.pmtiles';
-/* ---------- the non-building world ----------
-   MEASURED, not assumed: every source below was range-requested with an Origin
-   header before a single line of UI was written for it, because F60 found Open
-   Buildings 2.5D and Copernicus DEM CORS-blocked after they had been designed in.
+/* ---------- WHY THERE IS NO LAND COVER, LAND USE OR PLACES LAYER ----------
+   There was. Overture's base.pmtiles (195 GB) and places.pmtiles (19 GB) were
+   both CORS-verified and both wired in. They have been REMOVED, and the reason
+   is measurement, not taste.
 
-     overture base.pmtiles    206 + Access-Control-Allow-Origin: *   195 GB
-     overture places.pmtiles  206 + Access-Control-Allow-Origin: *    19 GB
-     ESA WorldCover COG       206 but NO CORS HEADER  -> UNUSABLE
+   MEASURED over one dense Imbaba box, asking each layer what it knew about the
+   ground under a selected area:
 
-   That last line is why land cover here is Overture's vector `land_cover`
-   rather than WorldCover's raster: the better-known product simply cannot be
-   read from a browser, and a layer we cannot fetch is not a layer.
-   Read from the PMTiles metadata rather than guessed:
-     base   z0-13  bathymetry, infrastructure, land, land_cover, land_use, water
-     places z14    place */
-const PMTBASE  = TILEBASE + 'base.pmtiles';
-const PMTPLACE = TILEBASE + 'places.pmtiles';
+     water 0 · land cover 0 · natural land 0 · land use 2 · places 0
+     infrastructure 6
+
+   Six features. For that, every pan issued range requests into two archives and
+   the export shipped a `classes.geojson` that was, in this city, empty. A layer
+   that answers "I know nothing about here" is worse than no layer, because the
+   empty file reads as "there is nothing here" rather than "this was never
+   mapped".
+
+   It is also not what this tool is for. Buildings arrive at roughly 0.3 m.
+   The best global land cover is 10 m and scores 65% (ESA WorldCover, the one
+   Overture vectorises — Esri 75% and Dynamic World 72% are both CORS-blocked).
+   One of its pixels is the width of one Imbaba building. Mixing a 0.3 m
+   measurement with a 10 m guess in the same export makes the export less
+   trustworthy, not more complete.
+
+   So: buildings, roads and administrative names. Nothing else is fetched. */
 
 /* ---------- reading a JSON string property from inside the style ----------
    Several Overture fields are JSON serialised into a single string: `names`,
@@ -570,82 +612,9 @@ let minConf = 0;
 const confFilter = () => minConf <= 0 ? null
   : ['any', ['!', ['has','confidence']], ['>=', ['to-number',['get','confidence'], 0], minConf]];
 
-/* ---------- land palettes ----------
-   These fills sit OVER satellite imagery, so the colours are chosen to read
-   against it rather than against paper: desaturated, mid-value, and distinct in
-   hue rather than in lightness, because lightness contrast is what the imagery
-   underneath is already using. Subtype lists come from the Overture schema;
-   anything unmatched falls through to a neutral so a new subtype appears as
-   grey rather than disappearing. */
-const LC_COLOR = ['match', ['coalesce', ['get','subtype'], ['get','class'], ''],
-  'forest','#2f7d4f', 'tree','#2f7d4f', 'wood','#2f7d4f',
-  'grass','#6aa84f', 'meadow','#6aa84f',
-  'shrub','#7d9b52', 'scrub','#7d9b52',
-  'crop','#b8a33e', 'farmland','#b8a33e',
-  'wetland','#4a8f7a', 'mangrove','#3f8a6e', 'marsh','#4a8f7a',
-  'moss','#8ab08a',
-  'barren','#b09166', 'rock','#9d8a72', 'sand','#cdb891', 'desert','#c7ab7d',
-  'snow','#dbe8f0', 'glacier','#cfe2ee', 'ice','#dbe8f0',
-  'urban','#8b8f99', 'developed','#8b8f99',
-  'reef','#3d9bb5', 'physical','#8f9aa6',
-  // MEASURED over Cairo at z13.5, not taken from the schema page: `land` came
-  // back 10 times and `tree` 678, neither of which the docs list as land_cover
-  // subtypes. Anything still unmatched stays grey ON PURPOSE, so a subtype we
-  // have never seen is visible as unstyled rather than invisible.
-  'land','#8a9a7e',
-  '#7f8a96'];
-
-/* MEASURED over Imbaba, not read off the schema page: `basic_category` returns
-   LEAF values - dental_clinic, pharmacy_and_drug_store, food_and_beverage_store,
-   vehicle_parts_store, bank_or_credit_union - not the dozen top-level groups the
-   docs describe. An exact match list would need hundreds of entries and would go
-   stale on every taxonomy change, so this tests for a SUBSTRING instead and one
-   rule covers a whole family: 'clinic', 'pharmacy' and 'hospital' all read as
-   health without naming any of them.
-
-   Overture also replaced `categories` with `basic_category` and drops the old
-   field in the September 2026 release, so both are read. */
-const catStr = ['downcase', ['coalesce', ['get','basic_category'], ['get','category'], '']];
-const catHas = sub => ['>=', ['index-of', sub, catStr], 0];
-const PLACE_COLOR = ['case',
-  ['any', catHas('health'), catHas('medical'), catHas('clinic'), catHas('hospital'),
-          catHas('pharmacy'), catHas('dental'), catHas('doctor')],      '#e05a7a',
-  ['any', catHas('school'), catHas('education'), catHas('university'),
-          catHas('college'), catHas('library'), catHas('learning')],    '#7a6fc0',
-  ['any', catHas('restaurant'), catHas('cafe'), catHas('food'), catHas('bakery'),
-          catHas('eat'), catHas('drink'), catHas('bar')],               '#e0a34a',
-  ['any', catHas('store'), catHas('shop'), catHas('retail'), catHas('market'),
-          catHas('supermarket')],                                       '#4d9fe8',
-  ['any', catHas('religio'), catHas('mosque'), catHas('church'), catHas('temple')], '#a88fd0',
-  ['any', catHas('government'), catHas('civic'), catHas('public_service'),
-          catHas('police'), catHas('post')],                            '#5aa9e6',
-  ['any', catHas('hotel'), catHas('accommodation'), catHas('lodging')],  '#6fcf97',
-  ['any', catHas('bank'), catHas('financial'), catHas('atm'), catHas('insurance')], '#6fc4b0',
-  ['any', catHas('automotive'), catHas('vehicle'), catHas('car_'), catHas('fuel'),
-          catHas('gas_station')],                                       '#8a94a4',
-  ['any', catHas('park'), catHas('sport'), catHas('gym'), catHas('active'),
-          catHas('attraction'), catHas('recreation')],                  '#7ec06a',
-  ['any', catHas('professional'), catHas('service'), catHas('office')],  '#b0a0c8',
-  '#9aa6b4'];   // no category at all - 8 of 39 over Imbaba - stays neutral
-
-const LU_COLOR = ['match', ['coalesce', ['get','subtype'], ['get','class'], ''],
-  'residential','#c07a5a',
-  'commercial','#c9714a', 'retail','#c9714a', 'entertainment','#c9714a',
-  'education','#7a6fc0',
-  'medical','#c05a7a',
-  'military','#6b7a52',
-  'park','#4f9e5f', 'recreation','#4f9e5f', 'conservation','#3f8f52',
-  'protected','#3f8f52', 'golf','#5aa86a',
-  'agriculture','#b8a33e', 'aquaculture','#4a8f9e', 'horticulture','#a8a34e',
-  'transportation','#8b8f99', 'airport','#8b8f99',
-  'cemetery','#8a7fa8', 'religious','#8a7fa8',
-  'landfill','#9a7a4a', 'resource_extraction','#9a7a4a', 'industrial','#9a7a4a',
-  'campground','#7f9a6a', 'public','#7f8a99', 'structure','#7f8a99',
-  // MEASURED over Cairo: `managed` returned 49 features and `construction` 3,
-  // and neither appears in the subtype list the schema documents. Without this
-  // the second most common land use in view drew as unstyled grey.
-  'managed','#6f9e5a', 'construction','#a8895a', 'pedestrian','#8f96a2',
-  '#7f8a96'];
+/* Overture serialises several fields as JSON inside one string property
+   (`names`, `sources`, `source_tags`); pick() above reads them inside the style
+   so label rendering stays native rather than hand-drawn. */
 
 const MSH = 'https://opendata.aiforgood.ai/building-density/v1/{q}/12-39-p3_ensemble_downsampled/{f}';
 let yearIdx = YEARS.length - 1;
@@ -665,52 +634,17 @@ const map = new maplibregl.Map({
   attributionControl:false,   // added explicitly below in compact form
   style:{version:8, sources:{
       sat:{type:'raster', tiles:[wbUrl(YEARS[YEARS.length-1])], tileSize:256, maxzoom:17,
-           attribution:'Imagery: Esri · Buildings: Google Open Buildings + Microsoft, combined by VIDA (CC BY-4.0/ODbL) · Roads, water, land &amp; places: Overture Maps (ODbL/CC BY-4.0), incl. data © OpenStreetMap contributors · Height: Microsoft (CDLA-2.0)'},
+           attribution:'Esri · Google Open Buildings + Microsoft via VIDA · Overture Maps, incl. data © OpenStreetMap contributors'},
       bld:{type:'vector', url:'pmtiles://'+PMT},
       ovt:{type:'vector', url:'pmtiles://'+PMTOVT},
       rds:{type:'vector', url:'pmtiles://'+PMTROAD},
       div:{type:'vector', url:'pmtiles://'+PMTDIV},
-      bse:{type:'vector', url:'pmtiles://'+PMTBASE},
-      plc:{type:'vector', url:'pmtiles://'+PMTPLACE},
       selsrc:{type:'geojson', data:{type:'FeatureCollection',features:[]}},
       boxsrc:{type:'geojson', data:{type:'FeatureCollection',features:[]}}
     },
     glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     layers:[
       {id:'sat', type:'raster', source:'sat'},
-      /* ---------- the non-building world ----------
-         Drawn UNDER the buildings so a footprint is never obscured by context,
-         and every one starts hidden. F63's lesson was that adding a layer can
-         make the map read as broken - two sources on one roof looked like a bug
-         - so nothing here appears unless the user asks for it. */
-      {id:'lc-fill', type:'fill', source:'bse', 'source-layer':'land_cover',
-       layout:{visibility:'none'},
-       paint:{'fill-opacity':0.28, 'fill-color':LC_COLOR}},
-      {id:'land-fill', type:'fill', source:'bse', 'source-layer':'land',
-       layout:{visibility:'none'},
-       paint:{'fill-opacity':0.28, 'fill-color':LC_COLOR}},
-      {id:'lu-fill', type:'fill', source:'bse', 'source-layer':'land_use',
-       layout:{visibility:'none'}, minzoom:6,
-       paint:{'fill-opacity':0.20, 'fill-color':LU_COLOR}},
-      {id:'lu-line', type:'line', source:'bse', 'source-layer':'land_use',
-       layout:{visibility:'none'}, minzoom:6,
-       paint:{'line-color':LU_COLOR,'line-width':0.9,'line-opacity':0.7}},
-      {id:'wat-fill', type:'fill', source:'bse', 'source-layer':'water',
-       layout:{visibility:'none'},
-       paint:{'fill-color':'#2d7fd3','fill-opacity':0.42}},
-      {id:'wat-line', type:'line', source:'bse', 'source-layer':'water',
-       layout:{visibility:'none'},
-       paint:{'line-color':'#5cb3ff','line-width':1.1,'line-opacity':0.9}},
-      {id:'infra-line', type:'line', source:'bse', 'source-layer':'infrastructure',
-       layout:{visibility:'none'}, minzoom:13,
-       paint:{'line-color':'#e0a34a','line-width':1.2,'line-opacity':0.85}},
-      /* Places are POINTS at z14 only. Colour carries the top-level category so
-         a clinic and a school are distinguishable without reading every label. */
-      {id:'plc-dot', type:'circle', source:'plc', 'source-layer':'place',
-       layout:{visibility:'none'}, minzoom:14,
-       paint:{'circle-radius':['interpolate',['linear'],['zoom'],14,2.4,18,5],
-              'circle-color':PLACE_COLOR, 'circle-opacity':0.9,
-              'circle-stroke-width':1, 'circle-stroke-color':'rgba(6,12,20,.65)'}},
       // Overture underneath: fills China, Europe and North America where the primary
       // source is empty. Same styling, so a user sees "buildings", not two datasets.
       {id:'ovt-fill', type:'fill', source:'ovt', 'source-layer':'building',
@@ -771,26 +705,14 @@ map.addControl(new maplibregl.GeolocateControl({
   showUserHeading:true}), 'top-left');
 map.addControl(new maplibregl.ScaleControl({unit:'metric'}));
 
-// On a phone the full attribution string covered a third of the map. Compact mode
-// collapses it to an (i) that expands on tap - the credit is still one tap away,
-// which is what the licences require.
-map.addControl(new maplibregl.AttributionControl({compact:true}), 'bottom-right');
-// MapLibre opens the compact attribution EXPANDED on first load, which covered 370
-// of 390 px on a phone. Collapse it; the (i) still opens it, so the licence credit
-// stays one tap away as the licences require.
-/* MapLibre ships the compact attribution OPEN. Removing the class was not
-   enough - the element is a <details> and it renders with the `open` attribute,
-   so it stayed expanded and covered the corner of the map on every device.
-   Both have to go, and it is done on load AND on the first idle because the
-   control is rebuilt when sources finish attaching their attribution. */
-function collapseAttrib(){
-  const a = document.querySelector('.maplibregl-ctrl-attrib');
-  if(!a) return;
-  a.classList.remove('maplibregl-compact-show');
-  if(a.tagName === 'DETAILS') a.removeAttribute('open');
-}
-map.on('load', collapseAttrib);
-map.once('idle', collapseAttrib);
+/* NO AttributionControl. It has been fought with twice — MapLibre ships the
+   compact form OPEN, and it is a <details> whose `open` attribute had to be
+   stripped on load AND on first idle because the control is rebuilt when
+   sources attach their attribution. What it produced when it finally behaved
+   was a <summary class="maplibregl-ctrl-attrib-button"> sitting on the map:
+   a button to reveal a credit that the panel footer now states permanently,
+   and that the About panel spells out in full. A credit that is always
+   readable meets the licences more squarely than one behind a toggle. */
 
 /* ---------- imagery year ---------- */
 const yr=document.getElementById('yr'), yrv=document.getElementById('yrv');
@@ -1026,13 +948,17 @@ on('conf','input', e => {
 });
 on('areaclear','click',()=>clearSelection());
 function clearSelection(){
-  boxA = boxB = null; lastBox = null; lastFeats = null; lastRaster = null; lastBC = null;
+  boxA = boxB = null; lastBox = null;
+  lastFeats = null; lastStats = null; lastRaster = null; lastBC = null;
   const bs = map.getSource('boxsrc'); if(bs) bs.setData({type:'FeatureCollection',features:[]});
   applyDrawScope();
   const ss = map.getSource('selsrc'); if(ss) ss.setData({type:'FeatureCollection',features:[]});
   const b = document.getElementById('body');
-  if(b) b.innerHTML = `<p class="empty"><strong>Click any building</strong> to read its record,
-    or <strong>Select area</strong> to measure a whole neighbourhood and export its mask.</p>`;
+  if(b) b.innerHTML = `<p class="empty"><strong>Click any building</strong> to read everything
+    its publisher records about it, or <strong>Select area</strong> to measure a
+    neighbourhood and export its mask.</p>`;
+  // lastStats is gone, so the status line must stop quoting the area it described
+  refresh();
 }
 // Escape leaves draw mode - a mode you cannot get out of is a trap
 document.addEventListener('keydown', e => {
@@ -1041,68 +967,17 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- layer stack ----------
-   ONE config drives the checkboxes, the visibility calls and the credit line.
+   ONE config drives the toggles, the visibility calls and the credit line.
    applyTheme once iterated a hard-coded layer id that had stopped existing, so
    the light theme silently left labels white on white; anything that can drift
-   from the style is now generated FROM the style's own layer ids. */
-/* EVERYTHING the map draws is listed here and nowhere else. There used to be a
-   "Labels" button beside the theme button as well, which toggled the road and
-   admin name layers - so road names had TWO controls that disagreed with each
-   other, and the panel taught the user that some layers live in the list and
-   some do not. One list, one rule. */
-/* CONTEXT IS ONE-AT-A-TIME, AND THAT IS THE FIX FOR THE MUD.
-   Land cover, land use, natural land and water were four independent
-   checkboxes, each a semi-transparent fill over the same ground. Turn on more
-   than one and they composite into brown sludge that hides the photograph and
-   makes every click return a pile of features - which is exactly the "overlapped
-   very much" that was reported.
+   from the style is now generated FROM the style's own layer ids.
 
-   They are not really independent anyway. MEASURED: land_cover carries
-   cartography {"min_zoom":8,"max_zoom":15,"sort_key":1} because it is
-   vectorised ESA WorldCover meant for one zoom band, while land_use comes from
-   OpenStreetMap polygons with no zoom hint at all. They are different answers to
-   the same question, so the honest control is "which one am I looking at",
-   not "how many can I stack". */
-/* WHAT WAS REMOVED AND WHY. Places, infrastructure, natural land and land use
-   are gone from this control. They came from OpenStreetMap polygons whose
-   coverage is arbitrary — dense in some cities, empty in others — so they made
-   the map look like it had an opinion about ground it knows nothing about.
-
-   What is left is what survives scrutiny:
-
-   MEASURED BY PUBLISHED VALIDATION, not by us: of the three global 10 m land
-   cover products, Esri scores 75% overall accuracy, Dynamic World 72%, and ESA
-   WorldCover — the one Overture vectorises and therefore the one reachable from
-   a browser — scores 65%. It is the weakest of the three. Water is the strongest
-   class anywhere at 92%; built area reaches 83%, and the literature names
-   informal settlements specifically as where these products break down.
-
-   There is no global land cover finer than 10 m. Not at 5 m, not at 1 m; the
-   only 1 m work is national (China). So a land cover pixel here is 10 m across
-   while a median Imbaba building is 10 m wide — one pixel per building, from the
-   least accurate of three products, in the fabric it handles worst. That cannot
-   be fixed by rendering it differently, so it ships labelled rather than
-   quietly. The building footprints at ~0.3 m remain the only fine-grained
-   classification on this map. */
-/* CLASS is now the single question the panel asks: what am I looking at?
-   Buildings sit in this list with everything else, because they ARE a class -
-   keeping them outside it was what made the panel read as two half-designs
-   stapled together. "None" is gone because Show > Off already says it, and two
-   controls for one idea is what made the last version confusing. */
-const CONTEXT = [
-  {key:'buildings', label:'Buildings', ids:[], dot:'#5aa9e6', building:true,
-   why:'Google Open Buildings + Microsoft and Overture, about 0.3 m. The only '
-     + 'fine-grained layer here, and the subject of this map.'},
-  {key:'landcover', label:'Land cover', ids:['lc-fill'], dot:'#2f7d4f',
-   why:'Vectorised ESA WorldCover, 11 classes at 10 m. Published accuracy 65% — '
-     + 'the weakest of the three global products, and weakest of all on informal '
-     + 'fabric. One pixel is about the width of one Imbaba building.'},
-  {key:'water',     label:'Water', ids:['wat-fill','wat-line'], dot:'#2d7fd3',
-   why:'Rivers, lakes, reservoirs and canals. Water is the most reliably mapped '
-     + 'class in every published comparison, at about 92%.'},
-];
-let ctxKey = 'buildings';
-
+   There used to be a CONTEXT radio group here as well - land cover, water,
+   natural land, land use, places - each a semi-transparent fill over the same
+   ground. Stacked, they composited into brown sludge that hid the photograph
+   and made every click return a pile of features. Then measurement settled it:
+   over dense Imbaba those five layers between them knew about eight features.
+   The whole group is gone, along with the two archives it streamed from. */
 const LAYERS = [
   {key:'roads',     label:'Road names',  src:'Overture',
    ids:['road-major','road-minor'],      on:true,  dot:'#eef5fb'},
@@ -1116,55 +991,8 @@ function setLayer(cfg, on){
   const el = document.querySelector(`.lyr[data-key="${cfg.key}"]`);
   if(el) el.setAttribute('aria-pressed', on ? 'true' : 'false');
 }
-/* THESE HIDE BY OPACITY, NOT BY visibility, AND THE REASON IS NOT COSMETIC.
-   MEASURED: querySourceFeatures returns NOTHING for a layer set to
-   visibility:none - MapLibre stops keeping tiles for layers it is not drawing.
-   So the area report could only describe land use and water while they were
-   being painted, and reported "none" the moment you turned them off. Holding
-   them visible at zero opacity keeps the tiles loaded, so the report can answer
-   "what is on this ground" regardless of what is currently on screen. */
-const CTX_OPACITY = {'lc-fill':0.28,'wat-fill':0.42,'wat-line':0.9};
-const CTX_DORMANT = ['land-fill','lu-fill','lu-line','infra-line','plc-dot'];
 function ctxIsBuildings(){ return true; }   // buildings are the only class now
-/* Hidden by OPACITY, never by visibility: querySourceFeatures returns nothing
-   for a layer at visibility:none, because MapLibre stops keeping its tiles, and
-   the area report has to be able to count what is on the ground whether or not
-   it is currently painted. */
-function paintCtx(id, o){
-  if(!map.getLayer(id)) return;
-  map.setLayoutProperty(id,'visibility','visible');
-  const prop = id.endsWith('-line') ? 'line-opacity'
-             : id.endsWith('-dot')  ? 'circle-opacity' : 'fill-opacity';
-  map.setPaintProperty(id, prop, o);
-  if(id === 'plc-dot') map.setPaintProperty(id,'circle-stroke-opacity', o ? 1 : 0);
-}
-function setContext(key){
-  ctxKey = key;
-  for(const id of CTX_DORMANT) paintCtx(id, 0);
-  // every non-building layer is loaded but never painted: the area report still
-  // counts water, land cover and land use on the ground, they simply do not
-  // compete with the buildings for the map
-  for(const c of CONTEXT) for(const id of c.ids) paintCtx(id, 0);
-  applyDrawScope();
-}
 function buildLayerUI(){
-  const ctx = null;
-  if(ctx){
-    ctx.innerHTML = CONTEXT.map(c =>
-      `<div class="lyr ctx" role="radio" tabindex="0" data-key="${c.key}"
-            aria-checked="${c.key===ctxKey}" aria-label="${c.label}">
-         <i class="sw rad"></i><i class="dot" style="background:${c.dot}"></i>
-         <span>${c.label}</span>
-       </div>`).join('');
-    for(const c of CONTEXT){
-      const el = ctx.querySelector(`.ctx[data-key="${c.key}"]`);
-      const go = () => setContext(c.key);
-      el.addEventListener('click', go);
-      el.addEventListener('keydown', e => {
-        if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); }
-      });
-    }
-  }
   const host = document.getElementById('lyrlist');
   if(!host) return;   // the Labels control was removed; road and place names stay on
   host.innerHTML = LAYERS.map(c =>
@@ -1243,16 +1071,15 @@ async function warmCaptures(){
    with identical ids at both 2014 and 2026. It is one snapshot, sourced 2022-2024.
    So on old imagery you are looking at TODAY'S buildings over YESTERDAY'S ground,
    and some will sit on land that was still empty. Saying so is the fix; pretending
-   otherwise is what made the map look wrong. */
+   otherwise is what made the map look wrong.
+
+   The warning itself used to sit on the status line and re-render on every pan.
+   It is a fixed property of the data, not news about the current view, so it now
+   lives in About the data and in every export README - stated once, properly,
+   instead of nagged. The OUTLINES still fade as the imagery moves away from the
+   vintage, which is the part that belongs on the map. */
 const BLD_VINTAGE = 2023;
 function vintageOffset(){ return YEARS[yearIdx] - BLD_VINTAGE; }
-function vintageNote(){
-  const d = vintageOffset();
-  if(Math.abs(d) <= 1) return '';
-  return `<br><span style="color:var(--estimated)">outlines are ~${BLD_VINTAGE}, `
-       + `imagery is ${YEARS[yearIdx]} — ${Math.abs(d)} years apart, so some buildings `
-       + `shown may not have existed yet</span>`;
-}
 
 /* ---------- bottom sheet (phones) ----------
    Three snap points instead of one fixed height, so the map is usable and a long
@@ -1424,6 +1251,11 @@ function dedupe(){
       map.setFeatureState({source:ssrc, sourceLayer:slyr, id:a.id}, {dup:true});
     }
   }
+  /* dedupe() opens by clearing ALL feature-state on both sources, which wipes
+     `insel` along with `dup`. Restoring it here rather than at each call site
+     means a caller cannot forget: measureBox() now calls dedupe() too, and the
+     first version of that made the selected outlines vanish. */
+  if(drawScope === 'sel' && lastBox) markInSelection();
 }
 // a hidden duplicate is still returned by queryRenderedFeatures, so the count,
 // the export, the click target and the neighbour test all have to skip it too
@@ -1477,6 +1309,21 @@ function centroid(f){
   let sx=0,sy=0,n=0; for(const p of rings[0]){sx+=p[0];sy+=p[1];n++;}
   return n?[sx/n,sy/n]:null;
 }
+/* ---------- the status line ----------
+   IT COUNTS THE SELECTED AREA WHENEVER THERE IS ONE. Reporting "1,032 buildings
+   in view" beside a report about a rectangle you drew put two different numbers
+   for two different rectangles next to each other and labelled neither, so the
+   count appeared to disagree with the report directly under it.
+
+   The selection figure is the one MEASURED when the area was drawn, not a fresh
+   query. queryRenderedFeatures cannot see past the edge of the canvas, so
+   re-querying a box that has been panned half off screen would count fewer
+   buildings every time the map moved — the number would drift while the area
+   it describes had not changed at all.
+
+   THE VINTAGE WARNING IS NOT HERE ANY MORE. It is a permanent property of the
+   data, not news about the current view, and it was repeating what the About
+   panel and the export README both state. It moved there. */
 function refresh(){
   const el=document.getElementById('status');
   if(map.getZoom()<12){
@@ -1485,29 +1332,23 @@ function refresh(){
       + ' <span style="color:var(--faint)">(needs level 12+)</span>';
     const a=document.getElementById('zin');
     if(a) a.onclick=(ev)=>{ev.preventDefault(); map.easeTo({zoom:15,duration:600});};
+    updateExport(0);
     return;
   }
-  /* MEASUREMENT IS NOW OPT-IN, AND ONLY INSIDE A SELECTED AREA.
-     This used to derive every building's geometry on every idle so it could show
-     a median footprint and a density for whatever happened to be on screen. Two
-     things were wrong with that. It is work nobody asked for — at zoom 12 that is
-     tens of thousands of buildings re-measured on every pan — and worse, the
-     numbers described "the current viewport", which is an arbitrary rectangle
-     that changes if you nudge the map. A statistic whose value depends on where
-     the window edge fell is not a measurement of anywhere.
-
-     So the status line now costs one count, and everything expensive happens
-     once, inside a rectangle the user deliberately drew. */
+  /* MEASUREMENT IS OPT-IN. This used to derive every building's geometry on
+     every idle so it could show a median footprint for whatever happened to be
+     on screen — at zoom 12, tens of thousands of buildings re-measured on every
+     pan, describing a rectangle that changes if you nudge the map. The status
+     line now costs one count; everything expensive happens once, on a box. */
   const f = visibleBuildings() || [];
+  const sel = (lastBox && lastStats) ? lastStats.n : null;
   el.innerHTML =
-    `<b>${f.length.toLocaleString()}</b> buildings in view`
+    (sel != null
+      ? `<b>${sel.toLocaleString()}</b> buildings in the selected area`
+      : `<b>${f.length.toLocaleString()}</b> buildings in view`)
     + ` · imagery <b>${YEARS[yearIdx]}</b>`
-    + vintageNote()
-    + sourceWarning()
-    + (f.length ? `<br><a href="#" id="pick" style="color:var(--accent)">Select an area</a>`
-                + ` <span style="color:var(--faint)">to measure and export it</span>` : '');
-  const a = document.getElementById('pick');
-  if(a) a.onclick = ev => { ev.preventDefault(); setDrawMode(true); };
+    + sourceWarning();
+  updateExport(f.length);
 }
 map.on('moveend', ()=>{ lastQuery = null; refresh(); });
 // setFeatureState repaints, which fires idle again; keying on the view stops the loop
@@ -1521,7 +1362,7 @@ map.on('idle', ()=>{
      where tiles landed late. */
   const k = map.getZoom().toFixed(2)+'|'+c.lng.toFixed(5)+'|'+c.lat.toFixed(5)
           + '|' + lastQuery.length;
-  if(k !== lastView){ lastView = k; dedupe(); if(drawScope === 'sel') markInSelection(); }
+  if(k !== lastView){ lastView = k; dedupe(); }
   refresh();
   lastQuery = null;
 });
@@ -1648,16 +1489,37 @@ function buildingsIn(bb){
    Pixel size is derived from the box so a 500 m box and a 5 km box both come
    back at a sensible resolution rather than a fixed grid. */
 const MAX_PX = 4096;
+/* THE MASK IS RENDERED IN WEB MERCATOR (EPSG:3857), NOT IN DEGREES.
+   It used to map longitude and latitude linearly onto x and y, which is plate
+   carree. Self-consistent with its own world file, but WRONG against everything
+   it will be compared to: the Esri imagery it was traced from, and every web
+   basemap, are Web Mercator. Dropped onto that imagery a degree-based mask
+   drifts vertically - a few metres at the top of a box and a few the other way
+   at the bottom, growing with latitude. That is the misalignment.
+
+   Projecting to Mercator first also makes the pixels genuinely square in the
+   projection, so a circle stays a circle and an area in pixels converts to an
+   area on the ground by one constant. The world file and .prj now describe
+   EPSG:3857 to match. */
+const MERC_R = 20037508.342789244;
+const toMercX = lng => lng * MERC_R / 180;
+const toMercY = lat => Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI/180) * MERC_R / 180;
+function mercBox(bb){
+  return {x0: toMercX(bb.w), x1: toMercX(bb.e),
+          y0: toMercY(bb.s), y1: toMercY(bb.n)};
+}
 function rasterGrid(bb){
+  const m = mercBox(bb);
+  const wm = m.x1 - m.x0, hm = m.y1 - m.y0;      // metres in the projection
   const latm = (bb.n + bb.s) / 2;
-  const wm = (bb.e - bb.w) * Math.cos(latm*Math.PI/180) * 111320;
-  const hm = (bb.n - bb.s) * 110540;
-  let gsd = 0.5;                                  // metres per pixel, target
-  let W = Math.round(wm/gsd), H = Math.round(hm/gsd);
-  if(Math.max(W,H) > MAX_PX){ const k = MAX_PX/Math.max(W,H); W = Math.round(W*k); H = Math.round(H*k); }
-  W = Math.max(1, W); H = Math.max(1, H);
-  gsd = wm / W;
-  return {W, H, gsd, wm, hm};
+  // Mercator exaggerates by 1/cos(lat); divide it out so GSD is true ground metres
+  const k = Math.cos(latm * Math.PI/180);
+  let gsd = 0.5;
+  let W = Math.round(wm * k / gsd), H = Math.round(hm * k / gsd);
+  if(Math.max(W,H) > MAX_PX){ const f = MAX_PX/Math.max(W,H); W = Math.round(W*f); H = Math.round(H*f); }
+  W = Math.max(1,W); H = Math.max(1,H);
+  gsd = wm * k / W;
+  return {W, H, gsd, wm, hm, merc:m};
 }
 function ringToPath(ctx, ring, bb, W, H){
   ctx.beginPath();
@@ -1680,7 +1542,7 @@ function instColor(i){
   return `hsl(${h} ${s}% ${l}%)`;
 }
 function renderMasks(bb, feats){
-  const {W, H, gsd} = rasterGrid(bb);
+  const {W, H, gsd, merc:M} = rasterGrid(bb);
   const mk = () => { const c = document.createElement('canvas'); c.width=W; c.height=H; return c; };
   const binC = mk(), instC = mk();
   const b = binC.getContext('2d'), n = instC.getContext('2d');
@@ -1702,8 +1564,8 @@ function renderMasks(bb, feats){
         for(const ring of rings){
           for(let i=0;i<ring.length;i++){
             const [lng,lat] = ring[i];
-            const x = (lng - bb.w) / (bb.e - bb.w) * W;
-            const y = (bb.n - lat) / (bb.n - bb.s) * H;
+            const x = (toMercX(lng) - M.x0) / (M.x1 - M.x0) * W;
+            const y = (M.y1 - toMercY(lat)) / (M.y1 - M.y0) * H;
             if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
           }
           ctx.closePath();
@@ -1763,15 +1625,21 @@ function renderMasks(bb, feats){
    A PNG alone is not a map. A world file plus a .prj makes the same PNG open in
    QGIS or ArcGIS in the right place, and needs no GeoTIFF writer. */
 function worldFile(bb, W, H){
-  const px = (bb.e - bb.w) / W, py = (bb.n - bb.s) / H;
+  const M = mercBox(bb);
+  const px = (M.x1 - M.x0) / W, py = (M.y1 - M.y0) / H;
   // 15 significant digits, not 12: at 12 the origin rounded ~1e-11 deg off the
   // true pixel centre. That is a micrometre on the ground and harmless, but a
   // georeferencing file that does not round-trip exactly invites doubt about
   // everything else in the export.
-  return [px, 0, 0, -py, bb.w + px/2, bb.n - py/2].map(v=>v.toPrecision(15)).join('\n') + '\n';
+  return [px, 0, 0, -py, M.x0 + px/2, M.y1 - py/2].map(v=>v.toPrecision(15)).join('\n') + '\n';
 }
-const PRJ_WGS84 = 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],'
-  + 'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]';
+// EPSG:3857, matching the raster the mask is drawn in
+const PRJ_3857 = 'PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",'
+  + 'DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],'
+  + 'UNIT["degree",0.0174532925199433]],PROJECTION["Mercator_1SP"],'
+  + 'PARAMETER["central_meridian",0],PARAMETER["scale_factor",1],'
+  + 'PARAMETER["false_easting",0],PARAMETER["false_northing",0],UNIT["metre",1],'
+  + 'AXIS["X",EAST],AXIS["Y",NORTH],AUTHORITY["EPSG","3857"]]';
 
 /* ================= ZIP =================
    Eight separate downloads is not a deliverable — the browser scatters them,
@@ -2085,99 +1953,16 @@ function kVerdict(k){
   return ['severe access deficit','#e06a5a'];
 }
 
-/* ---------- everything inside the box, class by class ----------
-   The export used to be buildings-only, which made the area selector look like
-   a building tool with extra steps. A selected area is a piece of GROUND, and
-   everything known about that ground should come out of it. */
-const CLASS_LAYERS = [
-  {key:'water',      label:'Water',          src:'water',          colour:'#2d7fd3'},
-  {key:'land_cover', label:'Land cover',     src:'land_cover',     colour:'#2f7d4f'},
-  {key:'land',       label:'Natural land',   src:'land',           colour:'#8a9a7e'},
-  {key:'land_use',   label:'Land use',       src:'land_use',       colour:'#c07a5a'},
-  {key:'infra',      label:'Infrastructure', src:'infrastructure', colour:'#e0a34a'},
-  {key:'places',     label:'Places',         src:null, layer:'plc-dot', colour:'#4d9fe8'},
-];
-function classFeaturesIn(bb){
-  const hit = c => c[0]>=bb.w && c[0]<=bb.e && c[1]>=bb.s && c[1]<=bb.n;
-  const anyPt = (a,d) => d===0 ? hit(a) : a.some(x=>anyPt(x,d-1));
-  const DEPTH = {Point:0,MultiPoint:1,LineString:1,MultiLineString:2,Polygon:2,MultiPolygon:3};
-  const inBox = f => { const g=f.geometry; if(!g||!g.coordinates) return false;
-    const d=DEPTH[g.type]; if(d==null) return false;
-    try{ return anyPt(g.coordinates,d); }catch(e){ return false; } };
-  const out = {};
-  for(const c of CLASS_LAYERS){
-    let f = [];
-    try{
-      f = c.src ? map.querySourceFeatures('bse',{sourceLayer:c.src})
-                : (map.getLayer(c.layer) ? map.queryRenderedFeatures({layers:[c.layer]}) : []);
-    }catch(e){ f = []; }
-    const seen = new Set(), keep = [];
-    for(const x of f){
-      const id = x.properties && x.properties.id;
-      if(id && seen.has(id)) continue;
-      if(id) seen.add(id);
-      if(!inBox(x)) continue;
-      keep.push(x);
-    }
-    out[c.key] = keep;
-  }
-  return out;
-}
-/* one GeoJSON carrying every class, each feature tagged with the class it came
-   from, so a single file opens in QGIS as a complete description of the area */
-function classesGeoJSON(bb, cls){
-  const feats = [];
-  for(const c of CLASS_LAYERS){
-    for(const f of (cls[c.key] || [])){
-      const p = f.properties || {};
-      feats.push({type:'Feature', geometry:f.geometry, properties:{
-        class_family: c.key,
-        name: featureName(p),
-        subtype: p.subtype || null,
-        class: p.class || null,
-        category: p.basic_category || null,
-        source: (jsonProp(p,'sources')||[]).map(x=>x.dataset).join('; ') || null,
-        licence: (jsonProp(p,'sources')||[]).map(x=>x.license).join('; ') || null,
-        id: p.id || null
-      }});
-    }
-  }
-  return {type:'FeatureCollection', features:feats};
-}
-/* a colour-coded raster of the classes over the same grid as the building mask,
-   so the two line up pixel for pixel in any GIS */
-function renderClassMask(bb, cls){
-  const {W,H} = rasterGrid(bb);
-  const cv = document.createElement('canvas'); cv.width=W; cv.height=H;
-  const ctx = cv.getContext('2d');
-  ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-  // painted least-specific first so the more specific classes land on top
-  for(const c of [...CLASS_LAYERS].reverse()){
-    ctx.fillStyle = c.colour;
-    for(const f of (cls[c.key]||[])){
-      const g=f.geometry; if(!g) continue;
-      const polys = g.type==='Polygon' ? [g.coordinates]
-                  : g.type==='MultiPolygon' ? g.coordinates : null;
-      if(!polys) continue;
-      for(const rings of polys){
-        ctx.beginPath();
-        for(const ring of rings){
-          ring.forEach(([lng,lat],i)=>{
-            const x=(lng-bb.w)/(bb.e-bb.w)*W, y=(bb.n-lat)/(bb.n-bb.s)*H;
-            i ? ctx.lineTo(x,y) : ctx.moveTo(x,y);
-          });
-          ctx.closePath();
-        }
-        ctx.fill('evenodd');
-      }
-    }
-  }
-  return {cv, W, H};
-}
-
 /* ---------- the area report ----------
    Every figure here is MEASURED from the streamed geometry. Nothing is inferred,
    so nothing needs the estimated tag except where a height is involved. */
+/* Ground area of a lon/lat box, in km². One definition, used by the report, the
+   export label and the CSV, so those three can never quote different sizes for
+   the same rectangle. */
+function areaKm2(bb){
+  const latm = (bb.n + bb.s)/2;
+  return (bb.e-bb.w)*Math.cos(latm*Math.PI/180)*111.320 * (bb.n-bb.s)*110.540;
+}
 function areaStats(bb, feats){
   const idx = partsIndex(feats);
   const areas = [], compact = [], touch = [];
@@ -2191,8 +1976,7 @@ function areaStats(bb, feats){
     if(!g.partial) compact.push(g.compact);
   }
   areas.sort((a,b)=>a-b); compact.sort((a,b)=>a-b);
-  const latm = (bb.n + bb.s)/2;
-  const km2 = (bb.e-bb.w)*Math.cos(latm*Math.PI/180)*111.320 * (bb.n-bb.s)*110.540;
+  const km2 = areaKm2(bb);
   const total = areas.reduce((a,b)=>a+b,0);
   const med = a => a.length ? a[Math.floor(a.length/2)] : null;
   return {
@@ -2206,109 +1990,172 @@ function areaStats(bb, feats){
     medCompact: med(compact)
   };
 }
-function landBreakdown(bb){
-  /* This used to query only the RENDERED features, so a context layer that was
-     switched off reported "none in view" - telling the user there is no water
-     here when the truth was that water was not being drawn. Reading the SOURCE
-     instead answers the question that was actually asked: what is on this
-     ground, regardless of what is currently painted. */
-  const sw = map.project([bb.w,bb.s]), ne = map.project([bb.e,bb.n]);
-  const box = [[Math.min(sw.x,ne.x),Math.min(sw.y,ne.y)],[Math.max(sw.x,ne.x),Math.max(sw.y,ne.y)]];
-  /* BUG THIS FIXES: the first walker assumed every coordinate array nested down
-     to a list of [lng,lat] pairs. A Point's coordinates ARE a [lng,lat] pair, so
-     it iterated the two numbers and recursed into one - "cs is not iterable".
-     Places are points, so the whole breakdown threw the moment one was in range.
-     Depth is now decided by the geometry TYPE rather than guessed from shape. */
-  const hit = c => c[0]>=bb.w && c[0]<=bb.e && c[1]>=bb.s && c[1]<=bb.n;
-  const anyPt = (a, depth) => {
-    if(depth === 0) return hit(a);
-    for(const x of a) if(anyPt(x, depth-1)) return true;
-    return false;
-  };
-  const DEPTH = {Point:0, MultiPoint:1, LineString:1, MultiLineString:2,
-                 Polygon:2, MultiPolygon:3};
-  const inBox = f => {
-    const g = f.geometry; if(!g || !g.coordinates) return false;
-    const d = DEPTH[g.type];
-    if(d == null) return false;
-    try { return anyPt(g.coordinates, d); } catch(e){ return false; }
-  };
-  const grab = srcLayer => {
-    let f = [];
-    try { f = map.querySourceFeatures('bse', {sourceLayer: srcLayer}); } catch(e){ return {}; }
-    const o = {}, seen = new Set();
-    for(const x of f){
-      if(x.properties && x.properties.id && seen.has(x.properties.id)) continue;
-      if(x.properties && x.properties.id) seen.add(x.properties.id);
-      if(!inBox(x)) continue;
-      const k = x.properties.subtype || x.properties.class || 'other';
-      o[k] = (o[k]||0)+1;
-    }
-    return o;
-  };
-  return {land_use: grab('land_use'), land_cover: grab('land_cover'),
-          land: grab('land'), water: grab('water'),
-          infrastructure: grab('infrastructure')};
-}
 function fmtRow(k, v, why){
   return `<tr><td class="k">${k}</td><td class="v">${v}${
     why?`<span class="why">${why}</span>`:''}</td></tr>`;
 }
 let lastFeats = null, lastStats = null, lastRaster = null, lastBC = null;
+
+/* One measurement pass. Called by the report AND by the export, so a downloaded
+   CSV can never disagree with the numbers that were on screen when it was
+   asked for - they come from the same call. */
+function measureBox(bb){
+  /* DEDUPLICATE FIRST, ALWAYS. This is the bug that made the same rectangle
+     measure two different neighbourhoods.
+
+     dedupe() ran on `idle`, and it is what populates dupIds — the set that
+     notDup() filters on. Draw a box before the map had gone idle, or right
+     after a pan, and the report was computed on RAW features: the same roof
+     counted once by VIDA and again by Overture.
+
+     MEASURED on one Imbaba box, the identical rectangle either way:
+       before dedupe   2,374 buildings   27% of footprint area double-drawn
+       after  dedupe   1,958 buildings    9% of footprint area double-drawn
+     A 21% swing in the headline count, decided by whether tiles had settled.
+     That is the doubled outlines that kept getting reported as "overlapping".
+
+     It is cheap next to the rasterise that follows, and this only ever runs on
+     a deliberate user action, so it runs unconditionally rather than guessing
+     whether the last dedupe is still valid. */
+  dedupe();
+  const feats = buildingsIn(bb);
+  const st = areaStats(bb, feats);
+  // Rasterise here and hand the SAME raster to the export. It is also what makes
+  // the coverage figure honest: the sum of polygon areas said 76.2% over one
+  // Imbaba box while the union of pixels said 55.4%, because two sources trace
+  // the same roof and adding their areas counts that ground twice.
+  const R = renderMasks(bb, feats);
+  st.cover = R.builtFraction;
+  st.overlap = st.bcr > 0 ? Math.max(0, 1 - st.cover / st.bcr) : 0;
+  let bc = null;
+  try { bc = blockComplexity(bb, feats); }
+  catch(e){ console.warn('block complexity failed', e); }   // never kill the report
+  return {feats, st, R, bc};
+}
+function boxLabel(bb){
+  const km2 = areaKm2(bb);
+  return km2 < 1 ? (km2*100).toFixed(1)+' ha' : km2.toFixed(2)+' km²';
+}
+
+/* ---------- WHAT EXPORT ACTS ON ----------
+   Export used to live inside the area report, which meant it only existed after
+   you had drawn a rectangle, and it carried a Clear button that did not export
+   anything - a destructive action sitting between two downloads.
+
+   It is now a permanent panel section with one job: say what it is about to
+   write, then write exactly that. With a selection it takes the selection. With
+   outlines Everywhere and no selection it takes the CURRENT VIEW, whose extent
+   is just as well defined - it is the map bounds, and both the world file and
+   the README record it. With outlines Off there is nothing to write and the
+   buttons say so instead of failing. */
+function exportTarget(){
+  if(drawScope === 'off') return null;
+  if(lastBox) return {bb:lastBox, kind:'selection'};
+  const b = map.getBounds();
+  return {bb:{w:b.getWest(), e:b.getEast(), s:b.getSouth(), n:b.getNorth()}, kind:'view'};
+}
+function updateExport(viewCount){
+  const lbl = document.getElementById('extarget');
+  const a = document.getElementById('ex-all'), m = document.getElementById('ex-mask');
+  if(!lbl) return;
+  const zoomOk = map.getZoom() >= 12;
+  const t = exportTarget();
+  const ok = !!t && zoomOk && buildingsLayerOn();
+  if(a) a.disabled = !ok;
+  if(m) m.disabled = !ok;
+  if(!t){
+    lbl.innerHTML = 'Outlines are <b>Off</b>, so there is nothing to write. '
+                  + 'Choose Everywhere or In selection.';
+    return;
+  }
+  if(!zoomOk){
+    lbl.innerHTML = 'Zoom in to level 12 or closer — no buildings are loaded out here.';
+    return;
+  }
+  if(t.kind === 'selection'){
+    lbl.innerHTML = `<b>Your selected area</b> · ${boxLabel(t.bb)} · `
+      + `${(lastStats ? lastStats.n : 0).toLocaleString()} buildings`;
+  } else {
+    lbl.innerHTML = `<b>The current view</b> · ${boxLabel(t.bb)} · `
+      + `${(viewCount||0).toLocaleString()} buildings`
+      + ` <span style="color:var(--faint)">— select an area to pin the extent</span>`;
+  }
+}
+async function runExport(everything){
+  const t = exportTarget(); if(!t) return;
+  let feats, st, R;
+  if(t.kind === 'selection' && lastFeats && lastStats && lastRaster){
+    feats = lastFeats; st = lastStats; R = lastRaster;
+  } else {
+    const m = measureBox(t.bb);
+    feats = m.feats; st = m.st; R = m.R; lastBC = m.bc;
+  }
+  await exportArea(t.bb, feats, st, everything, R);
+}
+on('ex-all','click', ()=>runExport(true));
+on('ex-mask','click', ()=>runExport(false));
+
+/* ---------- the area report ----------
+   ORDER IS THE ARGUMENT. Count and density first, because that is what anyone
+   asks of a neighbourhood; then how big the buildings are; then how much ground
+   they cover, with the double-counting stated rather than buried; then street
+   access, which is the finding this tool exists to surface. Export is no longer
+   in here at all - it is a control, not a result, and it now sits with the other
+   controls where it is reachable before a rectangle exists. */
 function areaReport(bb){
   const body = document.getElementById('body');
   if(!buildingsLayerOn()){
     body.innerHTML = `<p class="bid">Selected area</p>
-      <p class="empty">The <strong>Buildings</strong> layer is switched off, so there is
-      nothing to measure or export. Turn it back on in Layers and select the area again.</p>`;
+      <p class="empty">Outlines are switched <strong>Off</strong>, so there is nothing
+      to measure. Turn them back on above, then select the area again.</p>`;
     return;
   }
-  const feats = buildingsIn(bb);
-  lastFeats = feats; lastBox = bb;
-  const st = areaStats(bb, feats);
-  // Rasterise once, here, and reuse it for the export. It is what makes the
-  // coverage figure honest: the sum of polygon areas said 76.2% over one Imbaba
-  // box while the union of pixels said 55.4%, because two sources trace the same
-  // roof and adding their areas counts that ground twice.
-  const R = renderMasks(bb, feats);
-  lastRaster = R;
-  st.cover = R.builtFraction;
-  st.overlap = st.bcr > 0 ? Math.max(0, 1 - st.cover / st.bcr) : 0;
-  lastStats = st;
-  let bc = null;
-  try { bc = blockComplexity(bb, feats); }
-  catch(e){ console.warn('block complexity failed', e); }   // never kill the report
-  lastBC = bc;
+  lastBox = bb;
+  const {feats, st, R, bc} = measureBox(bb);
+  lastFeats = feats; lastRaster = R; lastStats = st; lastBC = bc;
   const kv = kVerdict(bc && bc.medianBlockK);
-  const num = v => v==null ? '—' : (v>=100 ? v.toFixed(0) : v.toFixed(2));
+  /* Precision follows magnitude, and thousands are grouped. "32.05 – 354" and
+     "448682" both appeared in one report: two decimals on a number that does
+     not have two decimals of accuracy, and six digits with no separator. */
+  const num = v => v==null ? '—'
+    : (v>=100 ? Math.round(v).toLocaleString()
+    : v>=10  ? v.toFixed(1)
+    : v.toFixed(2));
   if(typeof isPhone === 'function' && isPhone() && snapIdx === 0) setSheet(1);
   body.innerHTML = `
     <p class="bid">Selected area</p>
-    <span class="chip">${st.km2 < 1 ? (st.km2*100).toFixed(1)+' ha' : st.km2.toFixed(2)+' km²'}</span>
+    <span class="chip">${boxLabel(bb)}</span>
+    <span class="chip">${st.n.toLocaleString()} buildings</span>
 
-    <div class="grp"><h2>Buildings · measured</h2><table>
-      ${fmtRow('Count', `<span class="num">${st.n.toLocaleString()}</span>`)}
+    <div class="grp"><h2>How many, how dense</h2><table>
+      ${fmtRow('Buildings', `<span class="num">${st.n.toLocaleString()}</span>`,
+        'distinct footprints, after tile fragments and cross-source duplicates are merged')}
       ${fmtRow('Density', `<span class="num">${num(st.density)}</span> per km²`)}
+      ${fmtRow('Ground under a building', `<span class="num">${(st.cover*100).toFixed(1)}</span> %`,
+        'measured from the union of rasterised footprints — the figure the mask shows')}
+      ${st.overlap > 0.02 ? fmtRow('Double-drawn',
+        `<span class="num">${(st.overlap*100).toFixed(0)}</span> %<span class="tag t-part">quality</span>`,
+        'share of the summed footprint area that two sources drew on the same roof. '
+        + 'The coverage figure above already excludes it.') : ''}
+    </table></div>
+
+    <div class="grp"><h2>How big</h2><table>
       ${fmtRow('Median footprint', `<span class="num">${num(st.medArea)}</span> m²`)}
       ${fmtRow('Mean footprint', `<span class="num">${num(st.meanArea)}</span> m²`)}
-      ${fmtRow('P10 – P90', `<span class="num">${num(st.p10)} – ${num(st.p90)}</span> m²`)}
+      ${fmtRow('P10 – P90', `<span class="num">${num(st.p10)} – ${num(st.p90)}</span> m²`,
+        'eight buildings in ten fall inside this range')}
       ${fmtRow('Sum of footprints', `<span class="num">${num(st.totalBuilt)}</span> m²`,
-        'polygon areas added up — counts overlaps twice')}
-      ${fmtRow('Building coverage', `<span class="num">${(st.cover*100).toFixed(1)}</span> %`,
-        'ground actually under a building, measured from the union of pixels')}
-      ${st.overlap > 0.02 ? fmtRow('Source overlap',
-        `<span class="num">${(st.overlap*100).toFixed(0)}</span> %<span class="tag t-part">quality</span>`,
-        'how much of the summed footprint area is double-drawn — two sources tracing '
-        + 'the same roof. The coverage figure above already excludes it.') : ''}
+        'polygon areas added up. Larger than the coverage above, because it counts '
+        + 'overlapping outlines twice')}
       ${fmtRow('Median compactness', `<span class="num">${num(st.medCompact)}</span>`,
         '4πA/P² — 1.0 is a circle, lower is more ragged')}
     </table></div>
 
     ${bc && bc.noRoads ? `<div class="grp"><h2>Street access</h2>
-      <p class="empty">No road data has loaded for this area yet, so street access
-      and block complexity cannot be computed. Pan or zoom to load the road tiles,
-      then select the area again.</p></div>` : ''}
-    ${bc && !bc.noRoads ? `<div class="grp"><h2>Street access · measured</h2><table>
+      <p class="empty">No road data has loaded here yet, so street access and block
+      complexity cannot be computed. Pan or zoom to load the road tiles, then select
+      the area again.</p></div>` : ''}
+    ${bc && !bc.noRoads ? `<div class="grp"><h2>Street access</h2><table>
       ${fmtRow('Block complexity', `<span class="num">k = ${bc.medianBlockK ?? '—'}</span>
         <span class="tag" style="color:${kv[1]};background:color-mix(in srgb,${kv[1]} 15%,transparent)">${kv[0]}</span>`,
         'parcels to cross from the least reachable building out to a street. '
@@ -2318,7 +2165,7 @@ function areaReport(bb){
         `within ${ACCESS_M} m of a mapped road centreline`)}
       ${bc.unreachable ? fmtRow('No route to a street',
         `<span class="num">${bc.unreachable}</span>`,
-        'no chain of neighbours reaches a mapped road') : ''}
+        'no chain of touching neighbours reaches a mapped road') : ''}
       ${fmtRow('Median building k', `<span class="num">${bc.medianK ?? '—'}</span>`)}
       ${fmtRow('Deepest building', `<span class="num">k = ${bc.maxK ?? '—'}</span>`)}
       ${fmtRow('Blocks', `<span class="num">${bc.blocks}</span>`
@@ -2327,60 +2174,78 @@ function areaReport(bb){
     </table>
     <div class="note note-warn"><strong>Only as good as the road map.</strong>
     Computed against <b>${bc.roadLines.toLocaleString()}</b> mapped roads
-    (<b>${bc.roadSegs.toLocaleString()}</b> segments). Where alleys
-    are missing from the source — common in exactly this kind of fabric — k reads
-    too high and the fronting share too low.</div></div>` : ''}
+    (<b>${bc.roadSegs.toLocaleString()}</b> segments). Where alleys are missing from
+    the source — common in exactly this kind of fabric — k reads too high and the
+    fronting share too low.</div></div>` : ''}
 
-    <div class="grp"><h2>Export</h2>
-      <div class="row" style="margin-bottom:7px">
-        <button id="ex-all">Download all</button>
-        <button id="ex-mask">Mask only</button>
-        <button id="ex-clear">Clear</button>
-      </div>
-      <span class="why">A 2-colour mask (black background, white buildings), a
-      colour-coded instance mask, the footprints as GeoJSON, the statistics as CSV,
-      and world files so the images open in QGIS in the right place. Everything is
-      produced in your browser — nothing is uploaded.</span>
-    </div>
-
-    <div class="note note-warn"><strong>What this is.</strong> The mask is drawn from
-    published building footprints (Google, Microsoft, Overture), not from a model we
-    trained. Measured on this project, that data separates touching buildings about
-    five times better than our own model did.</div>`;
-  on('ex-all','click', ()=>exportArea(bb, feats, st, true));
-  on('ex-mask','click', ()=>exportArea(bb, feats, st, false));
-  on('ex-clear','click', clearSelection);
+    <div class="note note-info"><strong>Where these numbers come from.</strong>
+    Published footprints — Google, Microsoft and Overture — not a model trained here.
+    Measured on this project, that data separates touching buildings about five times
+    better than our own model did. Outlines are sourced ~${BLD_VINTAGE};
+    <a href="#" id="rep-about" style="color:var(--accent)">About the data</a>
+    covers what that means.</div>`;
+  on('rep-about','click', e=>{ e.preventDefault(); showAbout(); });
+  // the status line quotes lastStats, which only exists now — without this it
+  // kept saying "in view" until the next idle happened to fire
+  refresh();
 }
 
-/* ---------- the export bundle ---------- */
-async function exportArea(bb, feats, st, everything){
+/* ---------- the export bundle ----------
+   THE FILE NAMES IN THE ZIP AND THE FILE NAMES IN THE README ARE THE SAME
+   STRINGS, produced by one function. They were not. The archive wrote
+   `mask.png` while the README described `mask_30.0800_31.2000.png`, and it
+   also documented a `classes.geojson` and a `classes.png` that no code path
+   ever wrote. Anyone following the README looked for six files and found four
+   under other names, which is the "I can't see the image" report.
+
+   Now: exportFiles() decides every name once, exportArea() writes exactly that
+   list, and manifest() is handed the SAME list and prints it back. A file
+   cannot be described unless it is in the archive. */
+function exportNames(stamp, everything){
+  const n = {
+    mask:  `mask_${stamp}.png`,
+    maskw: `mask_${stamp}.pgw`,
+    maskp: `mask_${stamp}.prj`,
+  };
+  if(everything) Object.assign(n, {
+    inst:  `instances_${stamp}.png`,
+    instw: `instances_${stamp}.pgw`,
+    instp: `instances_${stamp}.prj`,
+    geo:   `buildings_${stamp}.geojson`,
+    csv:   `statistics_${stamp}.csv`,
+    txt:   `README.txt`,
+  });
+  return n;
+}
+async function exportArea(bb, feats, st, everything, raster){
   const btn = document.getElementById(everything?'ex-all':'ex-mask');
   const was = btn ? btn.textContent : '';
   if(btn){ btn.textContent = 'Preparing…'; btn.disabled = true; }
   try{
-    const {binC, instC, W, H, gsd, nInst} = lastRaster || renderMasks(bb, feats);
+    // the raster is passed in, never pulled from module state: exporting the
+    // current view while a selection existed used to write the SELECTION's
+    // pixels under the view's world file, which is a silently wrong georeference
+    const {binC, instC, W, H, gsd, nInst} = raster || renderMasks(bb, feats);
     const stamp = `${bb.s.toFixed(4)}_${bb.w.toFixed(4)}`;
+    const N = exportNames(stamp, everything);
     const wf = worldFile(bb, W, H);
     const files = [
-      {name:`mask.png`,  blob: await canvasBlob(binC)},
-      {name:`mask.pgw`,  text: wf},
-      {name:`mask.prj`,  text: PRJ_WGS84},
+      {name:N.mask,  blob: await canvasBlob(binC)},
+      {name:N.maskw, text: wf},
+      {name:N.maskp, text: PRJ_3857},
     ];
-    if(everything){
-      const cls = classFeaturesIn(bb);
-      files.push(
-        {name:`instances.png`, blob: await canvasBlob(instC)},
-        {name:`instances.pgw`, text: wf},
-        {name:`instances.prj`, text: PRJ_WGS84},
-        {name:`buildings.geojson`, text: JSON.stringify(buildingsGeoJSON(feats))},
-        {name:`statistics.csv`, text: statsCSV(bb, st, W, H, gsd, nInst, cls)},
-        {name:`README.txt`, text: manifest(bb, st, W, H, gsd, nInst, cls, stamp)}
-      );
-    }
-    // ONE file. Eight separate downloads got scattered by the browser, some were
-    // blocked as "multiple downloads", and nothing said which world file belonged
-    // to which image.
-    dl(`imbaba_area_${stamp}.zip`, await makeZip(files));
+    if(everything) files.push(
+      {name:N.inst,  blob: await canvasBlob(instC)},
+      {name:N.instw, text: wf},
+      {name:N.instp, text: PRJ_3857},
+      {name:N.geo,   text: JSON.stringify(buildingsGeoJSON(feats))},
+      {name:N.csv,   text: statsCSV(bb, st, W, H, gsd, nInst)},
+      {name:N.txt,   text: manifest(bb, st, W, H, gsd, nInst, stamp, N)}
+    );
+    // ONE file. Separate downloads got scattered by the browser, some were
+    // blocked as "multiple downloads", and nothing said which world file
+    // belonged to which image.
+    dl(`area_${stamp}.zip`, await makeZip(files));
   }catch(err){
     if(btn){ btn.textContent = 'Export failed'; btn.disabled = false; }
     console.error(err);
@@ -2408,19 +2273,15 @@ function buildingsGeoJSON(feats){
   }
   return {type:'FeatureCollection', features:out};
 }
-function statsCSV(bb, st, W, H, gsd, nInst, cls){
+function statsCSV(bb, st, W, H, gsd, nInst){
   const BC = lastBC;
-  const clsRows = [];
-  if(cls) for(const c of CLASS_LAYERS){
-    const list = cls[c.key] || [];
-    const by = {};
-    for(const f of list){ const k=(f.properties.subtype||f.properties.class||'other'); by[k]=(by[k]||0)+1; }
-    for(const k in by) clsRows.push([`${c.key}:${k}`, by[k], 'count', 'measured']);
-  }
+  const M = mercBox(bb);
   const r = [
     ['metric','value','unit','kind'],
-    ['west',bb.w,'deg','measured'], ['south',bb.s,'deg','measured'],
-    ['east',bb.e,'deg','measured'], ['north',bb.n,'deg','measured'],
+    ['bbox_west',bb.w,'deg_wgs84','measured'],  ['bbox_south',bb.s,'deg_wgs84','measured'],
+    ['bbox_east',bb.e,'deg_wgs84','measured'],  ['bbox_north',bb.n,'deg_wgs84','measured'],
+    ['bbox_west_3857',M.x0,'m','measured'],     ['bbox_south_3857',M.y0,'m','measured'],
+    ['bbox_east_3857',M.x1,'m','measured'],     ['bbox_north_3857',M.y1,'m','measured'],
     ['area',st.km2,'km2','measured'],
     ['buildings',st.n,'count','measured'],
     ['instances_in_mask',nInst,'count','measured'],
@@ -2441,64 +2302,98 @@ function statsCSV(bb, st, W, H, gsd, nInst, cls){
     ['road_segments_used',BC?BC.roadSegs:'', 'count','provenance'],
     ['raster_width',W,'px','measured'], ['raster_height',H,'px','measured'],
     ['raster_gsd',gsd,'m_per_px','measured'],
-    ['source','Google Open Buildings + Microsoft (VIDA) / Overture','','provenance'],
+    ['raster_crs','EPSG:3857','','provenance'],
+    ['min_confidence_filter',minConf,'0-1','provenance'],
+    ['building_sources', srcCredit(), '', 'provenance'],
+    ['building_vintage', BLD_VINTAGE, 'year', 'provenance'],
+    ['imagery_year', YEARS[yearIdx], 'year', 'provenance'],
     ['generated',new Date().toISOString(),'','provenance'],
-    ...clsRows
   ];
   return r.map(row => row.map(c =>
     typeof c === 'string' && /[",\n]/.test(c) ? `"${c.replace(/"/g,'""')}"` : c).join(',')).join('\n') + '\n';
 }
 
-/* A folder of eight files with cryptic names is not a deliverable. This says
-   what each one is, what it was computed from, and what it is NOT to be trusted
-   for - which is the same discipline the panel applies on screen. */
-function manifest(bb, st, W, H, gsd, nInst, cls, stamp){
-  const n = k => (cls[k]||[]).length;
+/* A folder of files with cryptic names is not a deliverable. This says what
+   each one is, what it was computed from, and what it is NOT to be trusted
+   for - the same discipline the panel applies on screen. It is handed the
+   SAME name list the archive was built from, so it can never describe a file
+   that is not in the zip. */
+function manifest(bb, st, W, H, gsd, nInst, stamp, N){
+  const M = mercBox(bb);
+  const BC = lastBC;
   return [
-`AREA EXPORT  ${stamp}`,
-`generated    ${new Date().toISOString()}`,
-`bounds       W ${bb.w}  S ${bb.s}  E ${bb.e}  N ${bb.n}  (WGS84)`,
-`area         ${st.km2.toFixed(3)} km2`,
+`AREA EXPORT   ${stamp}`,
+`generated     ${new Date().toISOString()}`,
+`bounds        W ${bb.w}  S ${bb.s}  E ${bb.e}  N ${bb.n}   (EPSG:4326, degrees)`,
+`              W ${M.x0.toFixed(2)}  S ${M.y0.toFixed(2)}  E ${M.x1.toFixed(2)}  N ${M.y1.toFixed(2)}   (EPSG:3857, metres)`,
+`area          ${st.km2.toFixed(4)} km2`,
+`raster        ${W} x ${H} px at ${gsd.toFixed(3)} m/px, EPSG:3857`,
 ``,
-`FILES`,
-`  mask_${stamp}.png         two colours only: black background, white building.`,
-`  mask_${stamp}.pgw/.prj    georeferencing for the PNGs. Keep beside them.`,
-`  instances_${stamp}.png    one colour per building, ${nInst} of them.`,
-`  buildings_${stamp}.geojson  building footprints with area, perimeter, compactness.`,
-`  classes_${stamp}.geojson  water, land cover, natural land, land use,`,
-`                            infrastructure and places on this ground.`,
-`  classes_${stamp}.png      the same classes as a raster on the SAME grid as the`,
-`                            building mask, so they overlay pixel for pixel.`,
-`  stats_${stamp}.csv        every computed figure, each tagged measured or estimated.`,
+`FILES IN THIS ARCHIVE`,
+`  ${N.mask}`,
+`      The deliverable. TWO colours only, verified pixel by pixel before`,
+`      writing: 0,0,0 background and 255,255,255 building. No grey edge.`,
+`  ${N.maskw}`,
+`  ${N.maskp}`,
+`      Georeferencing for ${N.mask}. Keep all three side by side or a GIS`,
+`      will open the PNG with no position at all.`,
+N.inst ? `  ${N.inst}` : null,
+N.inst ? `      One colour per building, ${nInst} of them, on the SAME grid as the`  : null,
+N.inst ? `      mask, so the two overlay pixel for pixel. Colours are snapped to a`  : null,
+N.inst ? `      fixed palette, so a colour is an id and not an average of two.`      : null,
+N.instw ? `  ${N.instw}` : null,
+N.instp ? `  ${N.instp}` : null,
+N.geo ? `  ${N.geo}` : null,
+N.geo ? `      The footprints as vectors, each with area, perimeter, compactness,`   : null,
+N.geo ? `      touching-neighbour count, the source that drew it and its confidence.`: null,
+N.csv ? `  ${N.csv}` : null,
+N.csv ? `      Every figure in the on-screen report, each tagged measured or`        : null,
+N.csv ? `      provenance. Nothing in it is inferred.`                              : null,
 ``,
-`RASTER        ${W} x ${H} px at ${gsd.toFixed(3)} m/px`,
+`PROJECTION - READ THIS IF THE MASK LOOKS OFFSET`,
+`  The PNGs are rendered in Web Mercator, EPSG:3857, which is what the`,
+`  satellite imagery they were traced against uses. An earlier version mapped`,
+`  longitude and latitude straight onto x and y - plate carree - which is`,
+`  self-consistent with its own world file but drifts against any web basemap,`,
+`  by more the further you are from the equator. If you have an older export`,
+`  that will not line up, that is why. Reproject or re-export.`,
+`  The .prj says EPSG:3857 and the .pgw is in metres, so QGIS and ArcGIS place`,
+`  it correctly with no manual step.`,
 ``,
 `WHAT IS IN THE BOX`,
-`  buildings   ${st.n}`,
-`  water       ${n('water')}`,
-`  land cover  ${n('land_cover')}`,
-`  natural     ${n('land')}`,
-`  land use    ${n('land_use')}`,
-`  infra       ${n('infra')}`,
-`  places      ${n('places')}`,
+`  buildings                  ${st.n}`,
+`  ground under a building    ${(st.cover*100).toFixed(1)} %  (union of pixels)`,
+`  sum of footprint areas     ${st.totalBuilt.toFixed(0)} m2  (counts overlaps twice)`,
+BC && !BC.noRoads ? `  block complexity k         ${BC.medianBlockK}` : null,
+BC && !BC.noRoads ? `  fronting a mapped street   ${BC.fronting} of ${BC.n}` : null,
 ``,
 `READ THIS BEFORE USING IT`,
-`  Buildings come from Google Open Buildings + Microsoft (via VIDA) and Overture,`,
-`  at roughly 0.3 m. They are the only fine-grained layer here.`,
-`  Land cover is vectorised ESA WorldCover at 10 m, published overall accuracy`,
-`  65% - the weakest of the three global 10 m products, and weakest of all on`,
-`  informal fabric. One pixel is about the width of one Imbaba building. Treat it`,
-`  as context, never as a per-building classification.`,
-`  Building coverage is measured from the UNION of rasterised footprints. The sum`,
-`  of polygon areas is also given and is larger, because two sources trace the`,
-`  same roof and adding their areas counts that ground twice.`,
+`  These footprints are PUBLISHED DATA, not the output of a model trained here.`,
+`  Google Open Buildings + Microsoft (via VIDA) and Overture, at roughly 0.3 m.`,
+`  Measured on this project, that data separates touching buildings about five`,
+`  times better than the model we trained, which is why it is what ships.`,
+``,
+`  Outlines are sourced ~${BLD_VINTAGE}. The imagery under them in the app was`,
+`  ${YEARS[yearIdx]}. Where those differ, a building may be drawn on ground that was`,
+`  still empty in the photograph, or a new building may be missing entirely.`,
+``,
+`  Building coverage is measured from the UNION of rasterised footprints. The`,
+`  sum of polygon areas is also given and is larger, because two sources trace`,
+`  the same roof and adding their areas counts that ground twice.`,
+``,
+`  Geometry comes from vector tiles and is simplified for the zoom it was read`,
+`  at. It is accurate to roughly a third of a metre here, not survey grade.`,
+BC && !BC.noRoads ? `` : null,
+BC && !BC.noRoads ? `  Block complexity was computed against ${BC.roadLines} mapped roads. Where` : null,
+BC && !BC.noRoads ? `  alleys are missing from the road map - common in dense informal fabric -` : null,
+BC && !BC.noRoads ? `  k reads too high and the fronting share too low.` : null,
 ``,
 `LICENCES - attribution is required, not optional`,
-`  Buildings   CC BY-4.0 / ODbL   Google, Microsoft, VIDA, Overture`,
-`  Land, water Overture Maps, incl. data (c) OpenStreetMap contributors (ODbL)`,
-`  Land cover  ESA WorldCover (CC BY-4.0) via Overture`,
-`  Imagery     Esri World Imagery, under its terms of use`,
-``].join('\n');
+`  Buildings   Google Open Buildings + Microsoft via VIDA (CC BY-4.0)`,
+`              Overture Maps (ODbL), incl. data (c) OpenStreetMap contributors`,
+`  Roads       Overture Maps (ODbL), incl. data (c) OpenStreetMap contributors`,
+`  Imagery     Esri World Imagery, under its terms of use (not redistributed here)`,
+``].filter(x => x !== null).join('\n');
 }
 
 /* ---------- export what is on screen, anywhere in the world ---------- */
@@ -2656,11 +2551,8 @@ async function onBuildingClick(e){
      the building itself. Independent height sources for one test area differed by up to
      4.7 m — about 1.5 storeys.</div>`);
 }
-/* ================= CLICK ANYTHING =================
-   Only buildings answered a click; water, land use, land cover and places drew
-   but could not be interrogated, so half the map looked inert. Every context
-   layer is now clickable and reports everything the source carries. */
-const CTX_CLICK = [];   // buildings only: nothing else is drawn, so nothing else is clickable
+/* Overture serialises `names`, `sources` and `source_tags` as JSON strings
+   inside a single tile property. The building record reads them through here. */
 function jsonProp(p, k){
   try { return p[k] ? JSON.parse(p[k]) : null; } catch(e){ return null; }
 }
@@ -2669,61 +2561,6 @@ function featureName(p){
   if(n){ if(n.common && (n.common.en)) return n.common.en; if(n.primary) return n.primary; }
   return p['@name'] || null;
 }
-function ctxReport(kind, f){
-  const p = f.properties || {};
-  const body = document.getElementById('body');
-  const srcs = jsonProp(p,'sources') || [];
-  const cart = jsonProp(p,'cartography');
-  const tags = jsonProp(p,'source_tags');
-  const nm = featureName(p);
-  const g = f.geometry && (f.geometry.type==='Polygon'||f.geometry.type==='MultiPolygon')
-    ? geomStats(f) : null;
-  const rows = [];
-  if(nm) rows.push(fmtRow('Name', nm));
-  if(p.subtype) rows.push(fmtRow('Subtype', p.subtype));
-  if(p.class)   rows.push(fmtRow('Class', p.class));
-  if(p.basic_category) rows.push(fmtRow('Category', String(p.basic_category).replace(/_/g,' ')));
-  if(p.confidence) rows.push(fmtRow('Confidence', `<span class="num">${(+p.confidence).toFixed(2)}</span>`));
-  if(p.height) rows.push(fmtRow('Height', `<span class="num">${p.height}</span> m`));
-  if(p.level != null) rows.push(fmtRow('Level', `<span class="num">${p.level}</span>`));
-  if(p.is_intermittent != null) rows.push(fmtRow('Intermittent', String(p.is_intermittent)));
-  if(p.is_salt != null) rows.push(fmtRow('Salt water', String(p.is_salt)));
-  if(g) rows.push(fmtRow('Area', `<span class="num">${g.area>1e6?(g.area/1e6).toFixed(2)+'</span> km²':g.area.toFixed(0)+'</span> m²'}`));
-  if(g) rows.push(fmtRow('Perimeter', `<span class="num">${g.perim.toFixed(0)}</span> m`));
-  if(g) rows.push(fmtRow('Compactness', `<span class="num">${g.compact.toFixed(2)}</span>`));
-  if(cart && cart.min_zoom != null)
-    rows.push(fmtRow('Drawn at zoom', `<span class="num">${cart.min_zoom}–${cart.max_zoom ?? '19'}</span>`,
-      'the publisher\'s own hint for which zooms this shape is meant for'));
-  const tagRows = tags ? Object.entries(tags).map(([k,v])=>fmtRow(k, String(v))).join('') : '';
-  body.innerHTML = `
-    <p class="bid">${nm || kind}</p><span class="chip">${kind}</span>
-    <div class="grp"><h2>Attributes · as published</h2><table>${rows.join('')}</table></div>
-    ${tagRows ? `<div class="grp"><h2>Original tags</h2><table>${tagRows}</table>
-      <span class="why">Exactly as they came from the source, unedited.</span></div>` : ''}
-    ${srcs.length ? `<div class="grp"><h2>Provenance</h2><table>
-      ${srcs.map(x=>fmtRow(x.dataset||'source',
-        `${x.license||''}${x.update_time?` · ${String(x.update_time).slice(0,10)}`:''}`)).join('')}
-    </table></div>` : ''}
-    <div class="note note-info">Every value here is exactly what the publisher records.
-    Nothing on this panel is inferred.</div>`;
-  if(typeof isPhone === 'function' && isPhone() && snapIdx === 0) setSheet(1);
-}
-for(const [lid, kind] of CTX_CLICK){
-  map.on('click', lid, e => {
-    if(!e.features || !e.features.length) return;
-    // invisible layers must not answer clicks - same rule as the buildings
-    const owner = CONTEXT.find(c => c.ids.includes(lid));
-    if(!owner || owner.key !== ctxKey) return;
-    // buildings win a shared click - they are the subject of this app
-    const b = map.queryRenderedFeatures(e.point, {layers:BLD_LAYERS.filter(l=>map.getLayer(l))})
-                 .filter(isHittable);
-    if(b.length) return;
-    ctxReport(kind, e.features[0]);
-  });
-  map.on('mouseenter', lid, ()=>{ if(!drawing) map.getCanvas().style.cursor='pointer'; });
-  map.on('mouseleave', lid, ()=>{ if(!drawing) map.getCanvas().style.cursor=''; });
-}
-
 const BLD_LAYERS = ['bld-fill','ovt-fill'];
 for(const L of BLD_LAYERS){
   map.on('click', L, onBuildingClick);
@@ -2812,47 +2649,120 @@ document.addEventListener('keydown', e=>{
   if(e.key === 'Escape') document.activeElement.blur();
 });
 
-on('about','click', e=>{
-  e.preventDefault();
+/* ---------- About the data ----------
+   THIS PANEL WAS WRONG AND IT MATTERED. It credited "roads, water, land cover,
+   land use, places, divisions" long after the land, water and places layers had
+   been removed, so the one screen whose job is to say what you are looking at
+   was naming four things that were not on the map. A licence panel that lists
+   sources the app does not use is not over-crediting, it is inaccurate.
+
+   It also had no way out: clicking it replaced the report you were reading and
+   left you there. It now closes back to whatever it interrupted.
+
+   And the vintage warning lives here now, in one place, instead of repeating on
+   the status line every time the imagery slider moved. */
+function showAbout(){
+  const gapNote = (() => {
+    const d = YEARS[yearIdx] - BLD_VINTAGE;
+    if(Math.abs(d) <= 1) return `The imagery you are viewing is ${YEARS[yearIdx]}, which is
+      about the same age, so outlines and photograph should agree.`;
+    return `<b>You are viewing ${YEARS[yearIdx]} imagery — ${Math.abs(d)} years away.</b> ` + (d > 0
+      ? `Buildings put up since ${BLD_VINTAGE} are in the photograph but have no outline.`
+      : `Some outlines sit on ground that was still empty when this photograph was taken.`);
+  })();
   document.getElementById('body').innerHTML = `
-    <div class="grp"><h2>What this shows</h2><table>
+    <p class="bid">About the data</p>
+    <span class="chip">nothing is stored in this file</span>
+
+    <div class="grp"><h2>Where everything comes from</h2><table>
       <tr><td class="k">Buildings</td><td class="v">Google Open Buildings + Microsoft
-        Global ML Footprints, combined by VIDA (CC BY-4.0 / ODbL)
-        <span class="why">the full union of both products, 2.7 billion footprints,
-        streamed as vector tiles — nothing is stored in this file. Measured over one
-        dense test area it carries 1,071 buildings where a conflated alternative
-        carried 342.</span></td></tr>
-      <tr><td class="k">Roads, water, land cover,<br>land use, places, divisions</td>
-        <td class="v">Overture Maps (ODbL / CC BY-4.0)
-        <span class="why">the base, transportation, places and divisions themes,
-        streamed as PMTiles. Includes data © OpenStreetMap contributors.</span></td></tr>
-      <tr><td class="k">Height</td><td class="v">Microsoft (CDLA-2.0)
-        <span class="why">~76 m grid, 2020 Q4 and 2023 Q4, read live from cloud-optimised
-        rasters</span></td></tr>
+        Global ML Footprints, combined by VIDA · CC BY-4.0
+        <span class="why">The full union of both products rather than a thinned
+        conflation, streamed as vector tiles. Measured over one dense Imbaba box it
+        carries 1,071 buildings where a conflated alternative carried 342.</span></td></tr>
+      <tr><td class="k">Buildings</td><td class="v">Overture Maps · ODbL, incl. data
+        © OpenStreetMap contributors
+        <span class="why">Drawn alongside the above because neither is sufficient
+        alone. Measured per tile: VIDA has zero buildings in Beijing and 84 in
+        Berlin; Overture has 3,819 in Beijing but roughly half VIDA's density in
+        dense informal fabric.</span></td></tr>
+      <tr><td class="k">Roads</td><td class="v">Overture <code>transportation</code> · ODbL
+        <span class="why">Street names, and the network that block complexity is
+        measured against.</span></td></tr>
+      <tr><td class="k">Country and region<br>names</td><td class="v">Overture
+        <code>divisions</code> · ODbL</td></tr>
+      <tr><td class="k">Height</td><td class="v">Microsoft building density · CDLA-2.0
+        <span class="why">~76 m grid, 2020 Q4 and 2023 Q4, read live from
+        cloud-optimised GeoTIFFs when you click a building. An average over the cell,
+        never that building's own height.</span></td></tr>
       <tr><td class="k">Imagery</td><td class="v">Esri World Imagery
-        <span class="why">13 captures, 2014–2026, under its terms of service</span></td></tr>
+        <span class="why">${YEARS.length} releases, ${YEARS[0]}–${YEARS[YEARS.length-1]}, under its terms of
+        service. Not redistributed by this file and not included in any export.</span></td></tr>
       <tr><td class="k">Place search</td><td class="v">Nominatim / OpenStreetMap</td></tr>
+    </table>
+    <div class="note note-warn"><strong>Attribution is required by these licences,
+    not optional.</strong> Keep the credit line and this panel in any redistributed
+    copy, and in anything published from an export.</div></div>
+
+    <div class="grp"><h2>Outlines are ~${BLD_VINTAGE}. The imagery is not.</h2>
+      <p class="why" style="display:block;margin:0 0 8px">The building layer is a single
+      snapshot — measured, it does not change with the imagery slider: 3,966 buildings
+      with identical ids at both ${YEARS[0]} and ${YEARS[YEARS.length-1]}. ${gapNote}</p>
+      <p class="why" style="display:block;margin:0">This is a property of the data, not a
+      fault in the map, and it is recorded in every export README.</p></div>
+
+    <div class="grp"><h2>What is measured, and what is not</h2><table>
+      <tr><td class="k">Measured</td><td class="v">footprint geometry, area, perimeter,
+        compactness, touching neighbours, counts, density, coverage, block complexity
+        <span class="why">All computed here, in your browser, from the streamed
+        geometry. Nothing is inferred.</span></td></tr>
+      <tr><td class="k">Estimated</td><td class="v">height, floors, population
+        <span class="why">Height is a ~76 m cell average, floors are derived from it,
+        and population is an allocation of a total you supply — never a headcount.
+        Each is labelled where it appears.</span></td></tr>
+      <tr><td class="k">Precision</td><td class="v">about a third of a metre
+        <span class="why">Geometry is read from vector tiles and simplified for the
+        zoom it was read at. Good enough to count and measure buildings; not survey
+        grade, and not a property boundary.</span></td></tr>
     </table></div>
-    <div class="note note-warn"><strong>Attribution is required</strong> by these licences.
-    Keep this panel in any redistributed copy.</div>
-    <div class="note note-info"><strong>What is measured vs estimated.</strong> Footprint
-    geometry is measured from the tiles. Height, floors and population are estimated and
-    labelled as such. Population is an allocation of a total you supply — never a headcount.</div>
-    <div class="grp"><h2>Area analysis</h2><table>
-      <tr><td class="k">Block complexity</td><td class="v">computed here
-        <span class="why">k — parcels to cross from the least reachable building out to a
-        street. The method is from Nature (2025), <em>Infrastructure deficits and informal
-        settlements in sub-Saharan Africa</em>. Only as good as the road map: where alleys
-        are unmapped, k reads too high.</span></td></tr>
-      <tr><td class="k">Building coverage</td><td class="v">computed here
-        <span class="why">from the union of rasterised footprints, not the sum of polygon
-        areas — two sources tracing one roof would otherwise count that ground twice.</span></td></tr>
-      <tr><td class="k">Exported masks</td><td class="v">computed here
-        <span class="why">drawn from the published footprints, not from a model. Measured on
-        this project, that data separates touching buildings about five times better than the
-        model we trained.</span></td></tr>
-    </table></div>`;
-});
+
+    <div class="grp"><h2>What the app computes</h2><table>
+      <tr><td class="k">Block complexity</td><td class="v">k — parcels to cross from the
+        least reachable building out to a street
+        <span class="why">The method is from Nature (2025), <em>Infrastructure deficits
+        and informal settlements in sub-Saharan Africa</em>. Only as good as the road
+        map: where alleys are unmapped, k reads too high.</span></td></tr>
+      <tr><td class="k">Ground under a<br>building</td><td class="v">from the union of
+        rasterised footprints
+        <span class="why">Not the sum of polygon areas, which counts the same roof
+        twice when two sources trace it. Both figures are shown; they differ by the
+        double-drawn share.</span></td></tr>
+      <tr><td class="k">Exported mask</td><td class="v">drawn from published footprints,
+        in EPSG:3857
+        <span class="why">Not from a model. Measured on this project, this data
+        separates touching buildings about five times better than the model we trained.
+        The raster is Web Mercator so it lands on web imagery without drift, and the
+        .pgw and .prj beside it say so.</span></td></tr>
+    </table></div>
+
+    <div class="grp"><h2>Why there is no land cover or land use</h2>
+      <p class="why" style="display:block;margin:0 0 8px">There was. Measured over dense
+      Imbaba, Overture's water, land cover, natural land, land use and places layers
+      knew about <b>eight features</b> between them, while every pan fetched from two
+      archives to find that out — and the export shipped a file of them that was empty.</p>
+      <p class="why" style="display:block;margin:0">There is also no global land cover
+      finer than 10 m. The best reachable product scores 65% overall accuracy and one of
+      its pixels is the width of one Imbaba building. Mixing that into a 0.3 m export
+      would make it less trustworthy, not more complete.</p></div>
+
+    <p style="margin:14px 0 0"><a href="#" id="about-back" style="color:var(--accent)">← Back</a></p>`;
+  on('about-back','click', e=>{ e.preventDefault(); closeAbout(); });
+  if(typeof isPhone === 'function' && isPhone() && snapIdx === 0) setSheet(1);
+}
+function closeAbout(){
+  if(lastBox) areaReport(lastBox); else clearSelection();
+}
+on('about','click', e=>{ e.preventDefault(); showAbout(); });
 
 
 /* ================= WHERE TO DRAW BUILDINGS =================
@@ -2902,17 +2812,25 @@ function applyDrawScope(){
   const seg = document.getElementById('drawmode');
   if(seg) for(const b of seg.querySelectorAll('button'))
     b.setAttribute('aria-checked', String(b.dataset.scope === drawScope));
-  const name = 'buildings';
   const why = document.getElementById('drawwhy');
   if(why) why.textContent =
-    drawScope === 'all' ? `All ${name} in view. At wide zooms that can be tens of thousands of shapes over the imagery.`
-  : drawScope === 'off' ? `Imagery only. Nothing is drawn and nothing can be clicked.`
-  : (lastBox ? `Only the ${name} inside your selected area.`
-             : `Draw an area below to choose which ${name} are shown.`);
+    drawScope === 'all' ? 'Every building in view is outlined. Zoomed out, that can be tens of thousands of shapes over the photograph.'
+  : drawScope === 'off' ? 'Imagery only. Nothing is outlined and nothing can be clicked.'
+  : (lastBox ? 'Only the buildings inside your selected area are outlined.'
+             : 'Select an area below and only the buildings inside it will be outlined.');
+  /* AREA IS AVAILABLE IN EVERY MODE, not only "In selection". Hiding it there
+     made drawing a rectangle look like a property of one display mode, when it
+     is the thing that decides what gets measured and exported in all of them. */
   const tools = document.getElementById('areatools');
-  if(tools) tools.hidden = drawScope !== 'sel';
+  if(tools) tools.hidden = drawScope === 'off';
+  const ex = document.getElementById('exblock');
+  if(ex) ex.hidden = false;
+  const hint = document.getElementById('areahint');
+  if(hint) hint.textContent = lastBox
+    ? 'Selected. Clear to measure somewhere else, or select again to replace it.'
+    : 'Drag a rectangle on the map. Escape cancels.';
+  updateExport(0);
   if(!map.getLayer('bld-fill')) return;
-  // non-building classes follow the same three states, by opacity
   markInSelection();
   for(const id of BLD_DRAW)
     if(map.getLayer(id))
@@ -2946,35 +2864,19 @@ const PROV_COLORS = {bld:'#5aa9e6', ovt:'#e0a34a'};
    and hiding data by default without offering the alternative is its own kind
    of dishonesty. SHOW BOTH exposes the disagreement: this app measured the
    double-drawn share at 6% in Jakarta, 17% in Imbaba and 65% in Paris. */
-function _unusedSetProv(on){
-  provOn = on;
-  const seg = document.getElementById('srcmode');
-  if(seg) for(const b of seg.querySelectorAll('button'))
-    b.setAttribute('aria-checked', String((b.dataset.mode === 'both') === on));
-  const why = document.getElementById('srcwhy');
-  if(why) why.textContent = on
-    ? 'Draws every polygon from both products, coloured by source, so you can see where they disagree.'
-    : 'Keeps the denser source and hides only the overlapping outlines of the other.';
-  if(!map.getLayer('bld-fill')) return;
-  const bldC = on ? PROV_COLORS.bld : (dark ? '#5aa9e6' : '#0b60a8');
-  const ovtC = on ? PROV_COLORS.ovt : '#5aa9e6';
-  map.setPaintProperty('bld-fill','fill-color', bldC);
-  map.setPaintProperty('bld-line','line-color', bldC);
-  map.setPaintProperty('ovt-fill','fill-color', ovtC);
-  map.setPaintProperty('ovt-line','line-color', ovtC);
-  // one source of truth for opacity so the two selectors cannot disagree
-  for(const id of BLD_DRAW)
-    if(map.getLayer(id))
-      map.setPaintProperty(id, id.endsWith('fill') ? 'fill-opacity' : 'line-opacity',
-                           opacityExpr(id));
-  const el = document.getElementById('provkey');
-  if(el) el.style.display = on ? 'flex' : 'none';
-}
 let showVida = true, showOvt = true;
 const SRC_PICKS = [
   {key:'vida', label:'Google + Microsoft', dot:'#5aa9e6', get:()=>showVida, set:v=>showVida=v},
   {key:'ovt',  label:'Overture',           dot:'#e0a34a', get:()=>showOvt,  set:v=>showOvt=v},
 ];
+/* the exact sources that produced the numbers being exported, so a CSV can be
+   traced back to a state of the app rather than to "Overture, probably" */
+function srcCredit(){
+  const on = [];
+  if(showVida) on.push('Google Open Buildings + Microsoft (VIDA)');
+  if(showOvt)  on.push('Overture Maps');
+  return on.join(' + ') || 'none';
+}
 function applySrcMode(){
   const pick = document.getElementById('srcpick');
   if(pick) pick.hidden = !provOn;
@@ -3163,7 +3065,7 @@ map.on('load', refresh);
 // colours were never re-applied. Run it again once there are layers to colour.
 map.on('load', applyTheme);
 map.on('load', ()=>{ buildLayerUI(); for(const c of LAYERS) setLayer(c, c.on);
-  applySrcMode(); setContext('buildings'); });
+  applySrcMode(); applyDrawScope(); });
 </script>
 </body>
 </html>
