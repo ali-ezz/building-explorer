@@ -345,8 +345,84 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
          it was three sections and a scroll away from the heading it belongs
          to. It stays put while the controls below it scroll. -->
     <div id="status">Loading…</div>
+    <!-- ================= THE SIDEBAR IS MODAL =================
+         Showing every control at once was wrong the moment a file could be
+         loaded: an image workspace and a world-map workspace are different
+         jobs, and stacking them meant the imagery slider, the source picker
+         and the world export sat above controls that had nothing to do with
+         them. A mode swaps the whole column and puts it back on removal, so
+         there is exactly one set of controls for the thing you are doing. -->
+    <div class="lyrs" data-mode="image" hidden>
+      <div class="hrow"><h2 id="im-title">Your image</h2></div>
+      <div id="im-meta"></div>
+      <div class="row" style="margin-top:8px"><button id="im-remove">Remove image</button></div>
+
+      <div id="im-place">
+        <div class="hrow" style="margin-top:15px;padding-top:13px;border-top:1px solid var(--line-soft)">
+          <h2>Placement</h2>
+          <button class="why-t" data-why="im-placewhy" aria-expanded="false" aria-label="Why">?</button></div>
+        <p class="why-b" id="im-placewhy" hidden>A GeoTIFF is placed from its own
+          georeferencing and nothing is guessed. A photograph has no coordinates, so you put
+          it roughly in place and snapping refines that against the imagery by correlation —
+          measured to 0.1 m from 33 m out.</p>
+        <div class="yr">
+          <label for="imgop">Opacity</label>
+          <input type="range" id="imgop" min="10" max="100" value="100" step="5">
+          <output id="imgopv">100%</output>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button id="up-fit">Fit to view</button>
+          <button id="up-snap">Snap to imagery</button>
+        </div>
+        <p class="segwhy" id="up-snapnote"></p>
+      </div>
+
+      <div id="im-cmp">
+        <div class="hrow" style="margin-top:15px;padding-top:13px;border-top:1px solid var(--line-soft)">
+          <h2>Published data on this ground</h2></div>
+        <div class="seg" id="im-outlines" role="radiogroup" aria-label="Show published outlines over your image">
+          <button role="radio" aria-checked="true"  data-scope="all">Show outlines</button>
+          <button role="radio" aria-checked="false" data-scope="off">Hide</button>
+        </div>
+        <div class="row" style="margin-top:8px"><button id="up-report">Measure this footprint</button></div>
+      </div>
+
+      <div id="im-model">
+        <div class="hrow" style="margin-top:15px;padding-top:13px;border-top:1px solid var(--line-soft)">
+          <h2>Read the picture itself</h2>
+          <button class="why-t" data-why="im-mdlwhy" aria-expanded="false" aria-label="Why">?</button></div>
+        <p class="why-b" id="im-mdlwhy" hidden>A public building-segmentation model, 15 MB,
+          downloaded once and run in this browser. Everything else here re-serves what
+          someone else traced; this is the one thing that looks at <em>your</em> pixels —
+          which matters because every limit in this app comes from imagery at 0.31–0.5 m and
+          your file may be far finer. Its quality on dense informal fabric is unmeasured, so
+          the result is always scored against the published footprints.</p>
+        <div class="row"><button id="mdl-run">Find buildings in it</button>
+                         <button id="mdl-export">Export that</button></div>
+        <p class="segwhy" id="mdl-note"></p>
+        <div id="mdl-cmp"></div>
+      </div>
+
+      <div id="im-export">
+        <div class="hrow" style="margin-top:15px;padding-top:13px;border-top:1px solid var(--line-soft)">
+          <h2>Export for this ground</h2>
+          <button class="why-t" data-why="im-exwhy" aria-expanded="false" aria-label="Why">?</button></div>
+        <p class="why-b" id="im-exwhy" hidden>The published footprints for exactly the ground
+          your image covers, rendered at your image's own pixel grid and projection — so the
+          mask drops onto your file one pixel to one pixel. Two-colour mask with touching
+          buildings separated, colour instance mask, GeoJSON, statistics CSV and world files.</p>
+        <div class="row"><button id="up-all">Download all</button>
+                         <button id="up-mask">Mask only</button></div>
+      </div>
+    </div>
+
+    <div class="lyrs" data-mode="vectors" hidden>
+      <div class="hrow"><h2 id="vec-title">Your polygons</h2></div>
+      <div id="vec-meta"></div>
+      <div class="row" style="margin-top:8px"><button id="vec-remove">Remove them</button></div>
+    </div>
     <div id="scroll">
-    <div class="tools">
+    <div class="tools" data-mode="map">
       <div class="field">
         <input type="text" id="place" placeholder="Search any place on Earth">
         <kbd>/</kbd>
@@ -368,7 +444,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       <input type="file" id="tif" hidden>
     </div>
 
-    <div class="lyrs">
+    <div class="lyrs" data-mode="map">
       <div class="hrow"><h2>Buildings</h2>
         <button class="why-t" data-why="drawwhy" aria-expanded="false" aria-label="Why">?</button></div>
       <div class="seg" id="drawmode" role="radiogroup" aria-label="Where to draw building outlines">
@@ -416,15 +492,8 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
           is placed from its EXIF GPS when a drone wrote one, otherwise by you and then
           snapped to the imagery. GeoJSON, KML and CSV are compared against the published
           data building by building. Everything is read in this browser — no file is
-          uploaded anywhere.</p>
-        <div id="loaded" hidden></div>
-        <div id="imgctl" hidden>
-          <div class="yr" style="margin-top:9px">
-            <label for="imgop">Opacity</label>
-            <input type="range" id="imgop" min="10" max="100" value="100" step="5">
-            <output id="imgopv">100%</output>
-          </div>
-        </div>
+          uploaded anywhere. Opening one switches this panel to that file's own controls
+          until you remove it.</p>
       </div>
 
       <div id="exblock">
@@ -1110,6 +1179,58 @@ function buildLayerUI(){
   }
 }
 
+
+/* ================= ONE WORKSPACE AT A TIME =================
+   Panels are tagged with the mode they belong to and the whole column is
+   swapped, rather than growing a taller and taller stack of everything. The
+   rule that makes it safe: the mode is DERIVED from what is actually loaded,
+   never set by hand at a call site — so a panel cannot be showing image
+   controls after the image has gone, which is exactly the class of bug the
+   teardown work was fixing. */
+function panelMode(){
+  if(overlay) return 'image';
+  if(userVectors) return 'vectors';
+  return 'map';
+}
+function applyPanelMode(){
+  const m = panelMode();
+  for(const el of document.querySelectorAll('[data-mode]'))
+    el.hidden = el.dataset.mode !== m;
+  if(m === 'image') fillImagePanel();
+  if(m === 'vectors') fillVectorPanel();
+  // an explanation left open in a hidden panel should not reopen with it
+  for(const b of document.querySelectorAll('.why-b')) if(b.closest('[hidden]')) b.hidden = true;
+  for(const t of document.querySelectorAll('.why-t')) if(t.closest('[hidden]')) t.setAttribute('aria-expanded','false');
+}
+function fillImagePanel(){
+  if(!overlay) return;
+  const t = document.getElementById('im-title');
+  if(t) t.textContent = overlay.name.length > 30 ? overlay.name.slice(0,28)+'…' : overlay.name;
+  const bb = overlay.bb, km2 = areaKm2(bb);
+  const gsd = (bb.e-bb.w)*Math.cos((bb.n+bb.s)/2*Math.PI/180)*111320/overlay.W;
+  const host = document.getElementById('im-meta');
+  if(host) host.innerHTML = `<table>
+    ${fmtRow('Size', `<span class="num">${overlay.W} × ${overlay.H}</span> px`)}
+    ${fmtRow('Ground resolution', `<span class="num">${gsd.toFixed(3)}</span> m/px`,
+      gsd <= 0.1 ? 'finer than any imagery this app can stream — a model run on this would '
+        + 'resolve walls that satellites cannot'
+      : gsd <= 0.2 ? 'finer than the 0.31–0.5 m satellite imagery under most of the world'
+      : 'comparable to the satellite imagery this app streams')}
+    ${fmtRow('Extent', km2 < 1 ? (km2*100).toFixed(1)+' ha' : km2.toFixed(3)+' km²')}
+    ${fmtRow('Position', overlay.geo
+        ? (overlay.exif ? 'from its EXIF GPS' : 'from its own georeferencing')
+        : 'placed by hand')}
+    ${fmtRow('Grid', overlay.proj === 'deg' ? 'EPSG:4326 · degrees' : 'EPSG:3857 · Web Mercator')}
+  </table>`;
+  // a georeferenced file does not need fitting; a photograph does
+  const fit = document.getElementById('up-fit');
+  if(fit) fit.hidden = !!overlay.geo;
+}
+function fillVectorPanel(){
+  if(!userVectors) return;
+  const t = document.getElementById('vec-title');
+  if(t) t.textContent = `${userVectors.features.length.toLocaleString()} of your polygons`;
+}
 
 /* Every "?" shows the paragraph belonging to its section and nothing else, so
    two open explanations cannot push the controls off screen together. */
@@ -3872,7 +3993,7 @@ async function loadVectorFile(file, say, kind){
   map.addLayer({id:'uv-line', type:'line', source:'uvsrc',
     paint:{'line-color':'#ffd166','line-width':1.8}});
   map.fitBounds([[bb.w,bb.s],[bb.e,bb.n]], {padding:50, duration:800});
-  loadedChips();
+  applyPanelMode();
   say(kindPanel(file, kind, `<div class="grp"><h2>Your file</h2><table>
       ${fmtRow('Features', `<span class="num">${fc.features.length.toLocaleString()}</span>`)}
       ${fmtRow('Extent', `${(areaKm2(bb)).toFixed(3)} km²`)}
@@ -4235,6 +4356,7 @@ function removeVectors(){
   if(map.getLayer('uv-fill')) map.removeLayer('uv-fill');
   if(map.getSource('uvsrc')) map.removeSource('uvsrc');
   userVectors = null;
+  applyPanelMode();
 }
 function removeOverlay(){
   removeModelOverlay();          // the model belongs to the image it read
@@ -4243,7 +4365,7 @@ function removeOverlay(){
   overlay = null;
   const b = document.getElementById('upload');
   if(b){ b.classList.remove('on'); b.textContent = 'Open a file…'; }
-  loadedChips();
+  applyPanelMode();
 }
 /* Everything a file brought with it. */
 function removeAllFiles(){
@@ -4265,9 +4387,11 @@ function emptyBody(){
    An overlay you cannot see the state of is an overlay you cannot get rid of.
    Each loaded thing gets a chip with an ×; the row disappears when nothing is
    loaded, so it costs nothing when unused. */
-function loadedChips(){
-  const ctl = document.getElementById('imgctl');
-  if(ctl) ctl.hidden = !overlay;          // opacity only matters with a picture
+/* Replaced by applyPanelMode(): what is loaded now decides the whole column
+   rather than adding a row to it. Kept as a forwarder so no caller can be left
+   pointing at nothing. */
+function loadedChips(){ applyPanelMode(); }
+function _unusedLoadedChips(){
   const host = document.getElementById('loaded');
   if(!host) return;
   const items = [];
@@ -4302,6 +4426,7 @@ function placeOverlay(cv, bb, name, proj, geo){
   const opEl = document.getElementById('imgop'), opOut = document.getElementById('imgopv');
   if(opEl) opEl.value = 100; if(opOut) opOut.textContent = '100%';
   if(map.getLayer('up-img')) map.setPaintProperty('up-img','raster-opacity', 1);
+  applyPanelMode();
   const b = document.getElementById('upload');
   if(b){ b.classList.add('on'); b.textContent = 'Remove image'; }
   loadedChips();
@@ -4480,7 +4605,6 @@ async function runModelOnOverlay(){
     const minPx = Math.max(4, Math.round(8 / Math.max(1e-6, gsd*gsd)));
     const {own, count} = instancesFromProb(prob, W, H, 0.5, minPx);
     modelResult = {own, count, W, H, thr:0.5, ms:Math.round(performance.now()-t0), gsd, minPx};
-    loadedChips();
     // draw it over the map so it can be seen against the imagery
     const R = rasterFromOwn(own, W, H);
     if(map.getLayer('mdl-img')) map.removeLayer('mdl-img');
@@ -4571,6 +4695,19 @@ async function exportForOverlay(everything){
   await exportArea(bb, feats, st, everything, R);
 }
 
+on('im-remove','click', ()=>{ removeOverlay(); emptyBody(); });
+on('vec-remove','click', ()=>{ removeVectors(); emptyBody(); });
+/* Outlines over your image: the same three-state control the map has, reduced
+   to the two states that mean anything here. */
+(function(){ const seg = document.getElementById('im-outlines'); if(!seg) return;
+  for(const b of seg.querySelectorAll('button')){
+    const go = () => { for(const o of seg.querySelectorAll('button'))
+        o.setAttribute('aria-checked', String(o === b));
+      drawScope = b.dataset.scope; applyDrawScope(); };
+    b.addEventListener('click', go);
+    b.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } });
+  }
+})();
 on('imgop','input', e => {
   imgOpacity = (+e.target.value)/100;
   const o = document.getElementById('imgopv');
@@ -4587,70 +4724,42 @@ on('upload','click', ()=>{
 (function(){ const b=document.getElementById('upload');
   if(b) b.title = 'GeoTIFF, JPEG (EXIF GPS is read), PNG, GeoJSON, KML or CSV'; })();
 
+/* DESCRIPTION ONLY. Every action used to be repeated here as well as in the
+   sidebar, which meant two elements with the same id — getElementById returns
+   the first, so the copies in the body were silently dead controls. The
+   sidebar owns the actions; the body says what the file is. */
 function overlayPanel(extra){
   const bb = overlay.bb;
   const km2 = areaKm2(bb);
-  const gsdX = (bb.e-bb.w)*Math.cos((bb.n+bb.s)/2*Math.PI/180)*111320/overlay.W;
+  const gsd = (bb.e-bb.w)*Math.cos((bb.n+bb.s)/2*Math.PI/180)*111320/overlay.W;
   return `<p class="bid">${overlay.name}</p>
-    <span class="chip">${overlay.geo ? 'georeferenced' : 'placed by hand'}</span>
+    <span class="chip">${overlay.geo ? (overlay.exif ? 'placed from EXIF GPS' : 'georeferenced')
+                                     : 'placed by hand'}</span>
     <span class="chip">${overlay.W} × ${overlay.H} px</span>
-
-    <div class="grp"><h2>Your image</h2><table>
-      ${fmtRow('Size', `<span class="num">${overlay.W} × ${overlay.H}</span> px`)}
-      ${fmtRow('Ground resolution', `<span class="num">${gsdX.toFixed(3)}</span> m per pixel`,
-        gsdX <= 0.1 ? 'finer than any imagery this app can stream — a model run on this '
-          + 'would resolve walls that satellites cannot'
-        : gsdX <= 0.2 ? 'finer than the 0.31–0.5 m satellite imagery under most of the world'
-        : 'comparable to the satellite imagery this app streams')}
-      ${fmtRow('Extent', `<span class="num">${km2 < 1 ? (km2*100).toFixed(1)+' ha' : km2.toFixed(3)+' km²'}</span>`)}
-      ${fmtRow('Grid', overlay.proj === 'deg' ? 'EPSG:4326 · degrees' : 'EPSG:3857 · Web Mercator')}
-    </table></div>
-
+    <span class="chip">${gsd.toFixed(2)} m/px</span>
     ${extra || ''}
-
-    <div class="grp"><h2>What we can give you for this ground</h2>
-      <div class="row" style="margin-bottom:7px">
-        <button id="up-all">Download all</button>
-        <button id="up-mask">Mask only</button>
-      </div>
-      <span class="why">The published footprints for exactly the ground your image
-      covers, rendered at <b>${overlay.W} × ${overlay.H}</b> — your image's own pixel
-      grid and projection — so the mask drops onto your file one pixel to one pixel.
-      Two-colour mask with touching buildings separated, colour instance mask,
-      GeoJSON, statistics CSV and world files.</span>
-    </div>
-
-    <div class="grp"><h2>Read the picture itself</h2>
-      <div class="row" style="margin-bottom:7px">
-        <button id="mdl-run">Find buildings in it</button>
-        <button id="mdl-export">Export that</button>
-      </div>
-      <p class="segwhy" id="mdl-note">A public building-segmentation model (15 MB, downloaded
-        once) runs on your image in this browser. Everything above re-serves what someone else
-        traced; this is the one thing that looks at <em>your</em> pixels — which matters because
-        every limit in this app comes from imagery at 0.31–0.5 m, and your file may be far
-        finer.</p>
-      <div id="mdl-cmp"></div>
-    </div>
-
     <div class="note note-info"><strong>Your file stayed on this machine.</strong>
-    There is no server in this application to upload it to. The model is downloaded
-    <em>to</em> the picture, not the other way round.</div>`;
+    There is no server in this application to upload it to. The controls for it are in the
+    panel above; removing it puts the map controls back.</div>`;
 }
-function wireOverlayPanel(){
+/* The image workspace lives in the sidebar and is bound once, at load, rather
+   than re-bound every time the body is rewritten — the body no longer contains
+   any of these controls. */
+(function wireImageWorkspace(){
   on('up-all','click', ()=>exportForOverlay(true));
   on('up-mask','click', ()=>exportForOverlay(false));
   on('mdl-run','click', runModelOnOverlay);
   on('mdl-export','click', ()=>exportModelResult(true));
-  on('up-report','click', e=>{ if(e&&e.preventDefault) e.preventDefault();
+  on('up-report','click', ()=>{ if(!overlay) return;
     drawBox2(overlay.bb); areaReport(overlay.bb); });
-  on('up-snap','click', e=>{ if(e&&e.preventDefault) e.preventDefault(); snapOverlay(); });
-  on('up-fit','click', e=>{ if(e&&e.preventDefault) e.preventDefault();
+  on('up-snap','click', ()=>snapOverlay());
+  on('up-fit','click', ()=>{ if(!overlay) return;
     const b=map.getBounds();
     moveOverlay({w:b.getWest(), e:b.getEast(), s:b.getSouth(), n:b.getNorth()});
     const el=document.getElementById('up-snapnote'); if(el) el.textContent='';
   });
-}
+})();
+function wireOverlayPanel(){}   // nothing left in the body to wire
 
 on('tif','change', async (ev) => {
   const file = ev.target.files && ev.target.files[0];
@@ -4708,12 +4817,7 @@ async function loadGeoTiffFile(file, say, kind){
   map.fitBounds([[w,s],[e,n]], {padding:40, duration:800});
   say(overlayPanel(`<div class="note note-info"><strong>Placed from its own
     georeferencing.</strong> ${proj === 'merc' ? 'Web Mercator, converted to degrees for the map.'
-    : 'WGS84 degrees.'} Nothing was guessed.</div>
-    <div class="grp"><h2>Check and measure</h2>
-      <div class="row"><button id="up-snap">Check against imagery</button>
-                       <button id="up-report">Measure this footprint</button></div>
-      <p class="segwhy" id="up-snapnote"></p>
-    </div>`));
+    : 'WGS84 degrees.'} Nothing was guessed.</div>`));
   wireOverlayPanel();
 }
 
@@ -4786,18 +4890,17 @@ async function loadPlainImage(file, say, kind){
   /* ACTIONS ARE BUTTONS, NOT WORDS IN A SENTENCE. These three were links inside
      prose and measured 12, 31 and 14 px tall - unusable on a phone, and reading
      as references rather than as the things you are meant to press. */
-  say(overlayPanel(`<div class="note note-warn"><strong>This file has no coordinates.</strong>
-    A JPEG or PNG carries no position, and working out where a photograph was taken from the
-    picture alone needs a trained model and a planet-wide reference index — not something a
-    browser can do, and guessing would be worse than asking. Pan the map to the right place,
-    fit it, then snap: that part <em>is</em> measurable, and it is the same correlation that
-    put this project's alignment at 0.52 m.</div>
-    <div class="grp"><h2>Put it in the right place</h2>
-      <div class="row"><button id="up-fit">Fit to this view</button>
-                       <button id="up-snap">Snap to imagery</button></div>
-      <p class="segwhy" id="up-snapnote"></p>
-      <div class="row" style="margin-top:8px"><button id="up-report">Measure this footprint</button></div>
-    </div>`));
+  say(overlayPanel(exif
+    ? `<div class="note note-info"><strong>Placed from the GPS in its EXIF.</strong>
+       ${exif.lat.toFixed(5)}, ${exif.lng.toFixed(5)}${exif.altitude
+         ? ` at ${exif.altitude.toFixed(0)} m, which sets the footprint size` : ''}.
+       Snap it to be sure of the last metre.</div>`
+    : `<div class="note note-warn"><strong>This file has no coordinates.</strong>
+       A JPEG or PNG carries no position, and working out where a photograph was taken from
+       the picture alone needs a trained model and a planet-wide reference index — not
+       something a browser can do, and guessing would be worse than asking. Pan the map to
+       the right place, then fit and snap: that part <em>is</em> measurable, and it is the
+       same correlation that put this project's alignment at 0.52 m.</div>`));
   wireOverlayPanel();
 }
 
