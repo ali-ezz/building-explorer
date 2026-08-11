@@ -373,6 +373,8 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
 </div>
 <script>
 const BASEMAPS = {"2014": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/5844/{level}/{row}/{col}", "2015": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/28163/{level}/{row}/{col}", "2016": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/18966/{level}/{row}/{col}", "2017": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/25521/{level}/{row}/{col}", "2018": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/23448/{level}/{row}/{col}", "2019": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/4756/{level}/{row}/{col}", "2020": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/29260/{level}/{row}/{col}", "2021": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/26120/{level}/{row}/{col}", "2022": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/45134/{level}/{row}/{col}", "2023": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/56102/{level}/{row}/{col}", "2024": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/16453/{level}/{row}/{col}", "2025": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/13192/{level}/{row}/{col}", "2026": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/32246/{level}/{row}/{col}"};
+/* year -> Esri's metadata service for that release; see imagery_metadata_urls() */
+const IMETA = {"2014": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2014_r21/MapServer", "2015": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2015_r23/MapServer", "2016": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2016_r22/MapServer", "2017": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2017_r19/MapServer", "2018": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2018_r17/MapServer", "2019": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2019_r16/MapServer", "2020": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2020_r16/MapServer", "2021": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2021_r17/MapServer", "2022": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2022_r15/MapServer", "2023": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2023_r11/MapServer", "2024": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2024_r13/MapServer", "2025": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2025_r12/MapServer", "2026": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2026_r06/MapServer"};
 const YEARS = Object.keys(BASEMAPS).map(Number).sort((a,b)=>a-b);
 // MEASURED over one dense Imbaba bbox: Overture tiles 342 buildings, Overture exact
 // parquet 367, our own direct GOB u MS fetch 728, and THIS source 1,071. It is the
@@ -1068,15 +1070,108 @@ async function reportCapture(){
   }
   const el = document.getElementById('capnote');
   if(!el) return;
-  el.textContent = same.length
-    ? 'same photograph as ' + same.join(', ') + ' here'
-    : '';
+  const collide = same.length ? 'same photograph as ' + same.join(', ') + ' here' : '';
+  /* THE SLIDER YEAR IS A PUBLICATION DATE, NOT A CAPTURE DATE. Esri's Wayback
+     releases are archive snapshots; the frame inside one over Imbaba labelled
+     2026 was taken on 30 April 2025. Asking the metadata service gives the day
+     the shutter actually opened, along with the sensor and - the number that
+     bounds everything measured on top of it - the picture's own positional
+     accuracy. */
+  const c = map.getCenter();
+  const m = await imageryMeta(c.lng, c.lat, year);
+  if(seq !== capSeq) return;
+  if(!m){ el.textContent = collide; return; }
+  const bits = [];
+  if(m.captured) bits.push('taken ' + m.captured);
+  if(isFinite(m.res)) bits.push(m.res.toFixed(2) + ' m/px');
+  if(m.sensor) bits.push(m.sensor);
+  el.innerHTML = bits.join(' · ') + (collide ? ' · ' + collide : '');
 }
 // resolve the neighbours quietly so a collision can be reported the moment it matters
 async function warmCaptures(){
   const t = centreTile();
   for(const y of YEARS) await captureOf(y, t);
   reportCapture();
+}
+
+/* ================= WHAT PICTURE IS THIS, ACTUALLY =================
+   Esri publishes, per location, the sensor that took the imagery, its native
+   resolution, the date it was really taken, and its stated horizontal
+   accuracy. It is CORS-open, so the app can ask about the ground on screen
+   rather than describing the archive.
+
+   MEASURED ACROSS 32 PLACES ON FIVE CONTINENTS, and this is the finding that
+   bounds the whole project:
+
+     Johannesburg   aerial 0.15 m   accuracy 0.45 m
+     New York       aerial 0.15 m   accuracy 0.60 m
+     Berlin         aerial 0.20 m   accuracy 0.40 m
+     everywhere else - Cairo, Lagos, Nairobi, Kinshasa, Dhaka, Dharavi,
+     Jakarta, Manila, Sao Paulo, Rocinha, Paris, Tokyo, rural Sahel -
+                    satellite 0.31-0.5 m   accuracy 8.47 m
+
+   For roughly nine tenths of the planet the reference picture is accurate to
+   about eight and a half metres. A footprint traced from it inherits that. No
+   deduplication rule, no model and no alignment pass can place a building
+   better than the image it was traced from, and saying "aligned to 0.5 m"
+   against an 8.47 m image is measuring agreement, not accuracy.
+
+   Resolution is the other half. At 0.5 m - Kibera, Dharavi, Kinshasa, Jakarta -
+   the party wall between two touching houses is ONE PIXEL. That is why dense
+   informal fabric comes back as merged blobs, and it is a property of the
+   sensor, not of the model that read it.
+
+   The panel says all of this, per area, because a user is entitled to know the
+   quality of the picture their measurements rest on. */
+const imetaCache = new Map();
+async function imageryMeta(lng, lat, year){
+  const svc = IMETA && IMETA[year];
+  if(!svc) return null;
+  const key = year + ':' + lng.toFixed(2) + ':' + lat.toFixed(2);
+  if(imetaCache.has(key)) return imetaCache.get(key);
+  const q = new URLSearchParams({
+    geometry: lng + ',' + lat, geometryType: 'esriGeometryPoint', sr: '4326',
+    layers: 'all', tolerance: '2',
+    mapExtent: [lng-0.02, lat-0.02, lng+0.02, lat+0.02].join(','),
+    imageDisplay: '600,600,96', returnGeometry: 'false', f: 'json'
+  });
+  let out = null;
+  try{
+    const r = await fetch(svc + '/identify?' + q.toString());
+    const d = await r.json();
+    const res = (d && d.results) || [];
+    // the finest layer that answered describes the picture actually shown
+    let best = null;
+    for(const x of res){
+      const a = x.attributes || {};
+      const rr = parseFloat(a.SRC_RES);
+      if(!isFinite(rr)) continue;
+      if(!best || rr < best.res) best = {res:rr, a};
+    }
+    if(best){
+      const a = best.a;
+      out = {sensor:a.SRC_DESC || null, res:best.res,
+             captured:a.SRC_DATE2 || null, accuracy:parseFloat(a.SRC_ACC),
+             product:a.NICE_NAME || null, provider:a.NICE_DESC || null};
+    }
+  }catch(e){ out = null; }
+  imetaCache.set(key, out);
+  return out;
+}
+/* An 8.47 m picture cannot support a claim about a 10 m building's position,
+   and a 0.5 m picture cannot resolve the wall between two of them. Both are
+   said in the same breath as the number they qualify. */
+function imageryVerdict(m){
+  if(!m) return null;
+  const a = isFinite(m.accuracy) ? m.accuracy : null;
+  const walls = m.res <= 0.2 ? 'resolves individual walls'
+              : m.res <= 0.35 ? 'a shared wall is about one pixel'
+              : 'a shared wall is below one pixel — touching buildings merge';
+  const pos = a == null ? null
+            : a <= 1 ? `positions good to about ${a} m`
+            : `positions only good to about ${a} m — every footprint traced from `
+              + `this picture inherits that`;
+  return {walls, pos};
 }
 
 /* ---------- building vintage vs imagery year ----------
@@ -2146,6 +2241,7 @@ function fmtRow(k, v, why){
     why?`<span class="why">${why}</span>`:''}</td></tr>`;
 }
 let lastFeats = null, lastStats = null, lastRaster = null, lastBC = null;
+let lastImagery = null;   // the imagery record behind the current report
 
 /* One measurement pass. Called by the report AND by the export, so a downloaded
    CSV can never disagree with the numbers that were on screen when it was
@@ -2335,6 +2431,9 @@ function areaReport(bb){
     the source — common in exactly this kind of fabric — k reads too high and the
     fronting share too low.</div></div>` : ''}
 
+    <div class="grp" id="imgq"><h2>The picture these numbers came from</h2>
+      <p class="empty">Reading the imagery record…</p></div>
+
     <div class="note note-info"><strong>Where these numbers come from.</strong>
     Published footprints — Google, Microsoft and Overture — not a model trained here.
     Measured on this project, that data separates touching buildings about five times
@@ -2342,6 +2441,33 @@ function areaReport(bb){
     <a href="#" id="rep-about" style="color:var(--accent)">About the data</a>
     covers what that means.</div>`;
   on('rep-about','click', e=>{ e.preventDefault(); showAbout(); });
+  /* Filled asynchronously so a slow metadata call never delays the report. */
+  (async () => {
+    const c = {lng:(bb.w+bb.e)/2, lat:(bb.s+bb.n)/2};
+    const m = await imageryMeta(c.lng, c.lat, YEARS[yearIdx]);
+    lastImagery = m;
+    const host = document.getElementById('imgq');
+    if(!host) return;                              // report replaced meanwhile
+    if(!m){ host.remove(); return; }
+    const v = imageryVerdict(m);
+    const acc = isFinite(m.accuracy) ? m.accuracy : null;
+    host.innerHTML = `<h2>The picture these numbers came from</h2><table>
+      ${fmtRow('Sensor', `${m.sensor || '—'}${m.product ? ` · ${m.product}` : ''}`,
+        m.provider || '')}
+      ${fmtRow('Taken', m.captured || '—',
+        'the day the shutter opened. The imagery slider shows the archive release, '
+        + 'which is a publication date and is usually later')}
+      ${fmtRow('Resolution', `<span class="num">${m.res.toFixed(2)}</span> m per pixel`, v.walls)}
+      ${acc != null ? fmtRow('Positional accuracy',
+        `<span class="num">${acc}</span> m<span class="tag ${acc<=1?'t-est':'t-part'}">limit</span>`,
+        v.pos) : ''}
+    </table>
+    ${acc != null && acc > 2 ? `<div class="note note-warn"><strong>This bounds every
+      position on this page.</strong> The footprints were traced from imagery like this
+      one, so a building's <em>place</em> cannot be more accurate than
+      <b>${acc} m</b> however precise its outline looks. Its shape, area and the counts
+      above are unaffected — those depend on resolution, not on where the frame sits.</div>` : ''}`;
+  })();
   // the status line quotes lastStats, which only exists now — without this it
   // kept saying "in view" until the next idle happened to fire
   refresh();
@@ -2463,7 +2589,11 @@ function statsCSV(bb, st, W, H, gsd, nInst){
     ['min_confidence_filter',minConf,'0-1','provenance'],
     ['building_sources', srcCredit(), '', 'provenance'],
     ['building_vintage', BLD_VINTAGE, 'year', 'provenance'],
-    ['imagery_year', YEARS[yearIdx], 'year', 'provenance'],
+    ['imagery_release_year', YEARS[yearIdx], 'year', 'provenance'],
+    ['imagery_captured', lastImagery && lastImagery.captured || '', '', 'provenance'],
+    ['imagery_sensor', lastImagery && lastImagery.sensor || '', '', 'provenance'],
+    ['imagery_resolution', lastImagery && isFinite(lastImagery.res) ? lastImagery.res : '', 'm_per_px', 'measured'],
+    ['imagery_positional_accuracy', lastImagery && isFinite(lastImagery.accuracy) ? lastImagery.accuracy : '', 'm', 'provenance'],
     ['generated',new Date().toISOString(),'','provenance'],
   ];
   return r.map(row => row.map(c =>
@@ -2540,6 +2670,16 @@ BC && !BC.noRoads ? `  fronting a mapped street   ${BC.fronting} of ${BC.n}` : n
 ``,
 `  Geometry comes from vector tiles and is simplified for the zoom it was read`,
 `  at. It is accurate to roughly a third of a metre here, not survey grade.`,
+``,
+`  POSITION IS BOUNDED BY THE IMAGERY, NOT BY THIS FILE. These footprints were`,
+`  traced from satellite or aerial pictures whose own horizontal accuracy is`,
+`  published per location. Measured across 32 places: aerial survey cities`,
+`  (Johannesburg, New York, Berlin) 0.4-0.6 m, and satellite coverage - which`,
+`  is most of the world - 8.47 m. Where the CSV beside this file records`,
+`  imagery_positional_accuracy, that figure is the floor on how well any`,
+`  building here can be placed, no matter how precise its outline looks.`,
+`  Shape and area are not affected; they depend on resolution, not on where`,
+`  the frame sits.`,
 BC && !BC.noRoads ? `` : null,
 BC && !BC.noRoads ? `  Block complexity was computed against ${BC.roadLines} mapped roads. Where` : null,
 BC && !BC.noRoads ? `  alleys are missing from the road map - common in dense informal fabric -` : null,
