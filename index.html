@@ -299,6 +299,8 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <output id="yrv">2026</output>
       </div>
       <div class="capnote" id="capnote"></div>
+      <div class="row"><button id="sharp">Sharpest here</button></div>
+      <p class="segwhy" id="sharpnote"></p>
       <div class="row">
         <button id="upload">Upload image</button>
         <button id="theme">Dark</button>
@@ -729,6 +731,8 @@ yr.addEventListener('input', ()=>{
   yearIdx=+yr.value; yrv.textContent=YEARS[yearIdx];
   // setTiles swaps the URL on the existing source; adding/removing sources races
   // with in-flight tile loads (see the Leaflet version of this same bug).
+  sharpFrame = null;
+  const sn = document.getElementById('sharpnote'); if(sn) sn.textContent = '';
   map.getSource('sat').setTiles([wbUrl(YEARS[yearIdx])]);
   // Fade the outlines as the imagery moves away from the building vintage.
   const off = Math.min(Math.abs(vintageOffset()), 8);
@@ -944,6 +948,7 @@ function applyTheme(){
   }
   const b = document.getElementById('theme'); if(b) b.textContent = dark ? 'Light' : 'Dark';
 }
+on('sharp','click', findSharpest);
 on('theme','click',()=>{ dark=!dark; applyTheme(); });
 applyTheme();
 on('area','click',()=>setDrawMode(!drawing));
@@ -1172,6 +1177,129 @@ function imageryVerdict(m){
             : `positions only good to about ${a} m — every footprint traced from `
               + `this picture inherits that`;
   return {walls, pos};
+}
+
+/* ================= FIND THE SHARPEST PICTURE OF THIS GROUND =================
+   The imagery slider steps through 13 releases, one per year, and shows the
+   newest. That is a publication order, not a quality order, and MEASURED over
+   five dense settlements the newest release is frequently the worst picture
+   available:
+
+     place     newest release            best in the archive
+     Imbaba    WV03  0.31 m  acc 8.47    WV03  0.31 m  acc 4.23
+     Kibera    WV02  0.50 m  acc 8.47    WV03  0.31 m  acc 4.23
+     Dharavi   WV02  0.50 m  acc 8.47    WV03  0.31 m  acc 5.00  (2025)
+     Rocinha   LG04  0.34 m  acc 8.47    WV03  0.31 m  acc 4.23
+     Lagos     LG04  0.34 m  acc 8.47    WV03  0.31 m  acc 5.00
+
+   Over Kibera that is imagery 1.6x sharper AND twice as positionally accurate,
+   sitting unused in the same archive we already stream. Resolution decides
+   whether a shared wall is visible at all; accuracy decides how well anything
+   traced from it can be placed. Both matter more than which year it is.
+
+   So: search the archive for THIS ground, on demand. 196 releases is far too
+   many to ask about interactively, so a spread across the archive is sampled -
+   enough to find the good frames without making the user wait on a hundred
+   round trips. Everything here is CORS-open and costs nothing but the clicks. */
+let waybackAll = null;
+async function loadWayback(){
+  if(waybackAll) return waybackAll;
+  const r = await fetch('https://s3-us-west-2.amazonaws.com/config.maptiles.arcgis.com/waybackconfig.json');
+  const d = await r.json();
+  waybackAll = Object.entries(d)
+    .filter(([,v]) => v.itemURL && v.metadataLayerUrl)
+    .map(([id,v]) => ({id, title:(v.itemTitle||'').replace('World Imagery (Wayback ','').replace(')',''),
+                       url:v.itemURL, meta:v.metadataLayerUrl}))
+    .sort((a,b) => b.title.localeCompare(a.title));
+  return waybackAll;
+}
+async function metaFor(svc, lng, lat){
+  const q = new URLSearchParams({
+    geometry: lng+','+lat, geometryType:'esriGeometryPoint', sr:'4326',
+    layers:'all', tolerance:'2',
+    mapExtent:[lng-0.01,lat-0.01,lng+0.01,lat+0.01].join(','),
+    imageDisplay:'600,600,96', returnGeometry:'false', f:'json'});
+  try{
+    const r = await fetch(svc+'/identify?'+q.toString());
+    const d = await r.json();
+    let best = null;
+    for(const x of (d.results||[])){
+      const a = x.attributes||{}; const rr = parseFloat(a.SRC_RES);
+      if(!isFinite(rr)) continue;
+      if(!best || rr < best.res) best = {res:rr, acc:parseFloat(a.SRC_ACC),
+        captured:a.SRC_DATE2, sensor:a.SRC_DESC, product:a.NICE_NAME};
+    }
+    return best;
+  }catch(e){ return null; }
+}
+/* Sharper first, then better placed, then more recent. Resolution leads because
+   it decides whether the wall between two houses exists in the picture at all;
+   no amount of positional accuracy recovers a building that was never resolved. */
+function betterFrame(a, b){
+  if(!b) return true;
+  if(a.res !== b.res) return a.res < b.res;
+  const aa = isFinite(a.acc)?a.acc:99, ba = isFinite(b.acc)?b.acc:99;
+  if(aa !== ba) return aa < ba;
+  return (a.title||'') > (b.title||'');
+}
+let scanning = false;
+async function findSharpest(){
+  if(scanning) return; scanning = true;
+  const btn = document.getElementById('sharp');
+  const say = t => { const e = document.getElementById('sharpnote'); if(e) e.innerHTML = t; };
+  if(btn){ btn.disabled = true; btn.textContent = 'Searching…'; }
+  try{
+    const all = await loadWayback();
+    const c = map.getCenter();
+    /* A SPREAD, NOT THE WHOLE ARCHIVE. 196 releases at roughly a second each,
+       against a browser that opens six connections to one host, is half a
+       minute of waiting - measured, 30 s for 24 samples. Fourteen finds the
+       good frames (the archive changes slowly; neighbouring releases usually
+       carry the identical picture) and reports progress while it works, so the
+       wait is visible rather than a frozen button. */
+    const step = Math.max(1, Math.round(all.length/13));
+    const pick = all.filter((_,i) => i % step === 0).slice(0, 14);
+    if(pick.indexOf(all[0]) < 0) pick.unshift(all[0]);
+    let done = 0;
+    const got = await Promise.all(pick.map(async r => {
+      const m = await metaFor(r.meta, c.lng, c.lat);
+      done++;
+      say(`Checking the archive… <b>${done}</b> of ${pick.length} releases.`);
+      return m ? Object.assign({}, r, m) : null;
+    }));
+    const found = got.filter(Boolean);
+    if(!found.length){ say('No imagery record for this place.'); return; }
+    let best = null;
+    for(const f of found) if(betterFrame(f, best)) best = f;
+    const now = await imageryMeta(c.lng, c.lat, YEARS[yearIdx]);
+    const same = now && now.res === best.res && now.accuracy === best.acc;
+    if(same){
+      say(`Already the sharpest of <b>${found.length}</b> releases checked here — `
+        + `${best.res.toFixed(2)} m/px, ±${isFinite(best.acc)?best.acc:'?'} m.`);
+      return;
+    }
+    sharpFrame = best;
+    map.getSource('sat').setTiles([best.url.replace('{level}','{z}').replace('{row}','{y}').replace('{col}','{x}')]);
+    const gain = [];
+    if(now && best.res < now.res) gain.push(`${(now.res/best.res).toFixed(1)}× sharper`);
+    if(now && isFinite(now.accuracy) && isFinite(best.acc) && best.acc < now.accuracy)
+      gain.push(`${(now.accuracy/best.acc).toFixed(1)}× better placed`);
+    say(`Showing <b>${best.title}</b> — ${best.sensor||'?'} ${best.res.toFixed(2)} m/px, `
+      + `±${isFinite(best.acc)?best.acc:'?'} m, taken ${best.captured||'?'}. `
+      + (gain.length ? `<b>${gain.join(' and ')}</b> than the ${YEARS[yearIdx]} release. ` : '')
+      + `<a href="#" id="sharpundo" style="color:var(--accent)">back to ${YEARS[yearIdx]}</a>`);
+    on('sharpundo','click', e => { e.preventDefault(); clearSharp(); });
+  } finally {
+    scanning = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Sharpest here'; }
+  }
+}
+let sharpFrame = null;
+function clearSharp(){
+  if(!sharpFrame) return;
+  sharpFrame = null;
+  map.getSource('sat').setTiles([wbUrl(YEARS[yearIdx])]);
+  const e = document.getElementById('sharpnote'); if(e) e.textContent = '';
 }
 
 /* ---------- building vintage vs imagery year ----------
