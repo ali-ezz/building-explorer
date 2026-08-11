@@ -181,6 +181,24 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
 .why-b[hidden]{display:none}
 .hrow{display:flex;align-items:center}
 
+/* what a file brought with it, and how to let go of it */
+#loaded{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-soft)}
+/* the section label lives outside .lyrs, so it needs the same rule stated here
+   rather than inheriting a browser default h2 at 1.5em */
+#loaded h2{margin:0 0 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--faint);font-weight:700}
+#loaded[hidden]{display:none}
+.lc{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:11.5px}
+.lc-k{font:9px/1 ui-monospace,monospace;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--faint);border:1px solid var(--line);border-radius:3px;padding:3px 5px;flex:none}
+.lc-n{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}
+.lc-x{all:unset;display:inline-block;box-sizing:border-box;cursor:pointer;flex:none;
+  width:44px;height:44px;margin:-14px -12px -14px 0;position:relative;
+  color:var(--faint);font:15px/44px ui-sans-serif,system-ui;text-align:center;
+  transition:color .12s}
+.lc-x:hover{color:#e06a5a}
+.lc-x:focus-visible{outline:2px solid var(--accent);outline-offset:-14px;border-radius:50%}
+
 /* ---- layer stack ---- */
 .lyrs{padding:11px 18px;border-bottom:1px solid var(--line)}
 .lyrs h2{margin:0;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
@@ -349,6 +367,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         order, not a quality order: over Kibera the archive holds imagery 1.6× sharper and
         twice as well placed as the one on screen.</p>
       <input type="file" id="tif" hidden>
+      <div id="loaded" hidden></div>
     </div>
 
     <div class="lyrs">
@@ -1018,10 +1037,7 @@ function clearSelection(){
   const bs = map.getSource('boxsrc'); if(bs) bs.setData({type:'FeatureCollection',features:[]});
   applyDrawScope();
   const ss = map.getSource('selsrc'); if(ss) ss.setData({type:'FeatureCollection',features:[]});
-  const b = document.getElementById('body');
-  if(b) b.innerHTML = `<p class="empty"><strong>Click any building</strong> to read everything
-    its publisher records about it, or <strong>Select area</strong> to measure a
-    neighbourhood and export its mask.</p>`;
+  emptyBody();
   // lastStats is gone, so the status line must stop quoting the area it described
   refresh();
 }
@@ -3254,6 +3270,22 @@ function featureName(p){
   if(n){ if(n.common && (n.common.en)) return n.common.en; if(n.primary) return n.primary; }
   return p['@name'] || null;
 }
+/* ---- CLICKING NOTHING MEANS NOTHING IS SELECTED ----
+   The only click handler was bound to the building layers, so a click on empty
+   ground was not a click at all and the previous building's record stayed on
+   screen indefinitely - reading as though that building were still chosen.
+   A general handler runs after the layer ones and clears when the click hit no
+   building, unless a drawn area owns the panel or a box is being drawn. */
+map.on('click', e => {
+  if(drawing) return;
+  if(lastBox) return;                        // the selection owns the panel
+  const hit = map.queryRenderedFeatures(e.point,
+    {layers: BLD_LAYERS.filter(l => map.getLayer(l))}).filter(isHittable);
+  if(hit.length) return;                     // the building handler has it
+  clearHover();
+  emptyBody();
+});
+
 const BLD_LAYERS = ['bld-fill','ovt-fill'];
 for(const L of BLD_LAYERS){
   map.on('click', L, onBuildingClick);
@@ -3551,7 +3583,11 @@ function applyDrawScope(){
       if(b.dataset.scope === drawScope) return;
       drawScope = b.dataset.scope;
       if(drawing) setDrawMode(false);
-      if(lastBox) clearSelection(); else applyDrawScope();
+      /* A building record belongs to the mode it was opened in. Switching to
+         Off while a record is showing left it there describing a building that
+         is no longer drawn. */
+      if(lastBox) clearSelection();
+      else { applyDrawScope(); emptyBody(); }
     };
     b.addEventListener('click', go);
     b.addEventListener('keydown', e => {
@@ -3809,19 +3845,17 @@ async function loadVectorFile(file, say, kind){
   if(fc && fc.type === 'Feature') fc = {type:'FeatureCollection', features:[fc]};
   if(!fc || !fc.features || !fc.features.length)
     throw new Error('no features found in this file');
-  userVectors = fc;
   const bb = vectorBounds(fc);
   if(!bb) throw new Error('the features carry no coordinates');
-  // draw them
-  if(map.getLayer('uv-line')) map.removeLayer('uv-line');
-  if(map.getLayer('uv-fill')) map.removeLayer('uv-fill');
-  if(map.getSource('uvsrc')) map.removeSource('uvsrc');
+  removeVectors();                 // one loaded set at a time
+  userVectors = fc;
   map.addSource('uvsrc', {type:'geojson', data:fc});
   map.addLayer({id:'uv-fill', type:'fill', source:'uvsrc',
     paint:{'fill-color':'#ffd166','fill-opacity':0.18}});
   map.addLayer({id:'uv-line', type:'line', source:'uvsrc',
     paint:{'line-color':'#ffd166','line-width':1.8}});
   map.fitBounds([[bb.w,bb.s],[bb.e,bb.n]], {padding:50, duration:800});
+  loadedChips();
   say(kindPanel(file, kind, `<div class="grp"><h2>Your file</h2><table>
       ${fmtRow('Features', `<span class="num">${fc.features.length.toLocaleString()}</span>`)}
       ${fmtRow('Extent', `${(areaKm2(bb)).toFixed(3)} km²`)}
@@ -4158,13 +4192,76 @@ function kindPanel(file, k, extra){
    the same correlation that measured this project's alignment at 0.52 m. */
 let overlay = null;      // {name, bb, W, H, proj, canvas, geo}
 
+/* ================= ONE PLACE THAT TAKES THINGS DOWN =================
+   Every feature here added its own layers and its own state, and each one
+   cleaned up only what it personally knew about. The result was exactly what
+   you would predict:
+
+     removing the uploaded image left the MODEL's overlay painted on the map,
+       because removeOverlay() had never heard of mdl-img
+     loading a GeoJSON drew it permanently - nothing anywhere removed uv-fill,
+       uv-line or uvsrc
+     clicking empty map left the last building's record on screen, because the
+       only click handler was bound to the building layers
+
+   So teardown is defined once, per thing, and the compound ones call the
+   smaller ones. A feature that adds a layer adds its removal HERE, next to
+   every other removal, where forgetting is visible. */
+function removeModelOverlay(){
+  if(map.getLayer('mdl-img')) map.removeLayer('mdl-img');
+  if(map.getSource('mdlsrc')) map.removeSource('mdlsrc');
+  modelResult = null;
+}
+function removeVectors(){
+  if(map.getLayer('uv-line')) map.removeLayer('uv-line');
+  if(map.getLayer('uv-fill')) map.removeLayer('uv-fill');
+  if(map.getSource('uvsrc')) map.removeSource('uvsrc');
+  userVectors = null;
+}
 function removeOverlay(){
-  if(!overlay) return;
+  removeModelOverlay();          // the model belongs to the image it read
   if(map.getLayer('up-img')) map.removeLayer('up-img');
   if(map.getSource('upsrc')) map.removeSource('upsrc');
   overlay = null;
   const b = document.getElementById('upload');
   if(b){ b.classList.remove('on'); b.textContent = 'Open a file…'; }
+  loadedChips();
+}
+/* Everything a file brought with it. */
+function removeAllFiles(){
+  removeOverlay();
+  removeVectors();
+  loadedChips();
+  emptyBody();
+}
+/* The canonical empty panel, written once so the three places that reset it
+   cannot drift into saying three different things. */
+function emptyBody(){
+  const b = document.getElementById('body');
+  if(b) b.innerHTML = `<p class="empty"><strong>Click any building</strong> to read everything
+    its publisher records about it, or <strong>Select area</strong> to measure a
+    neighbourhood and export its mask.</p>`;
+}
+
+/* ---- THE PANEL SHOWS WHAT IS LOADED, AND CAN LET GO OF IT ----
+   An overlay you cannot see the state of is an overlay you cannot get rid of.
+   Each loaded thing gets a chip with an ×; the row disappears when nothing is
+   loaded, so it costs nothing when unused. */
+function loadedChips(){
+  const host = document.getElementById('loaded');
+  if(!host) return;
+  const items = [];
+  if(overlay)     items.push({id:'lc-img', label:overlay.name, kind:'image'});
+  if(modelResult) items.push({id:'lc-mdl', label:`${modelResult.count} read from it`, kind:'model'});
+  if(userVectors) items.push({id:'lc-vec', label:`${userVectors.features.length} of your polygons`, kind:'vectors'});
+  host.hidden = !items.length;
+  if(!items.length){ host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="hrow"><h2>Loaded</h2></div>` + items.map(i =>
+    `<div class="lc"><span class="lc-k">${i.kind}</span><span class="lc-n">${i.label}</span>
+       <button class="lc-x" id="${i.id}" aria-label="Remove ${i.kind}">×</button></div>`).join('');
+  on('lc-img','click', ()=>{ removeOverlay(); emptyBody(); });
+  on('lc-mdl','click', ()=>{ removeModelOverlay(); loadedChips(); });
+  on('lc-vec','click', ()=>{ removeVectors(); loadedChips(); emptyBody(); });
 }
 function placeOverlay(cv, bb, name, proj, geo){
   removeOverlay();
@@ -4175,6 +4272,7 @@ function placeOverlay(cv, bb, name, proj, geo){
   overlay = {name, bb, W:cv.width, H:cv.height, proj, canvas:cv, geo};
   const b = document.getElementById('upload');
   if(b){ b.classList.add('on'); b.textContent = 'Remove image'; }
+  loadedChips();
 }
 function moveOverlay(bb){
   if(!overlay) return;
@@ -4350,6 +4448,7 @@ async function runModelOnOverlay(){
     const minPx = Math.max(4, Math.round(8 / Math.max(1e-6, gsd*gsd)));
     const {own, count} = instancesFromProb(prob, W, H, 0.5, minPx);
     modelResult = {own, count, W, H, thr:0.5, ms:Math.round(performance.now()-t0), gsd, minPx};
+    loadedChips();
     // draw it over the map so it can be seen against the imagery
     const R = rasterFromOwn(own, W, H);
     if(map.getLayer('mdl-img')) map.removeLayer('mdl-img');
@@ -4398,6 +4497,7 @@ async function runModelOnOverlay(){
     models break down. Treat the agreement figure above as the measurement, and the count
     as a proposal.</div>`;
     on('mdl-off','click', e => { e.preventDefault();
+      // hides the painting, keeps the result - the chip still offers a real removal
       if(map.getLayer('mdl-img')) map.removeLayer('mdl-img');
       if(map.getSource('mdlsrc')) map.removeSource('mdlsrc');
       note('Overlay hidden. The result is still ready to export.'); });
@@ -4503,10 +4603,10 @@ function wireOverlayPanel(){
   on('up-mask','click', ()=>exportForOverlay(false));
   on('mdl-run','click', runModelOnOverlay);
   on('mdl-export','click', ()=>exportModelResult(true));
-  on('up-report','click', e=>{ e.preventDefault();
+  on('up-report','click', e=>{ if(e&&e.preventDefault) e.preventDefault();
     drawBox2(overlay.bb); areaReport(overlay.bb); });
-  on('up-snap','click', e=>{ e.preventDefault(); snapOverlay(); });
-  on('up-fit','click', e=>{ e.preventDefault();
+  on('up-snap','click', e=>{ if(e&&e.preventDefault) e.preventDefault(); snapOverlay(); });
+  on('up-fit','click', e=>{ if(e&&e.preventDefault) e.preventDefault();
     const b=map.getBounds();
     moveOverlay({w:b.getWest(), e:b.getEast(), s:b.getSouth(), n:b.getNorth()});
     const el=document.getElementById('up-snapnote'); if(el) el.textContent='';
@@ -4569,12 +4669,12 @@ async function loadGeoTiffFile(file, say, kind){
   map.fitBounds([[w,s],[e,n]], {padding:40, duration:800});
   say(overlayPanel(`<div class="note note-info"><strong>Placed from its own
     georeferencing.</strong> ${proj === 'merc' ? 'Web Mercator, converted to degrees for the map.'
-    : 'WGS84 degrees.'} Nothing was guessed.
-    <a href="#" id="up-snap" style="color:var(--accent)">check it against the imagery</a>
-    if you want to see how well it lines up.</div>
-    <p class="segwhy" id="up-snapnote"></p>
-    <p class="segwhy"><a href="#" id="up-report" style="color:var(--accent)">Measure this
-    footprint</a> — the full area report for the ground your image covers.</p>`));
+    : 'WGS84 degrees.'} Nothing was guessed.</div>
+    <div class="grp"><h2>Check and measure</h2>
+      <div class="row"><button id="up-snap">Check against imagery</button>
+                       <button id="up-report">Measure this footprint</button></div>
+      <p class="segwhy" id="up-snapnote"></p>
+    </div>`));
   wireOverlayPanel();
 }
 
@@ -4644,18 +4744,21 @@ async function loadPlainImage(file, say, kind){
   placeOverlay(cv, {w:cx-cw/2, e:cx+cw/2, s:cy-ch/2, n:cy+ch/2},
                file.name, 'deg', !!exif);
   overlay.exif = exif;
+  /* ACTIONS ARE BUTTONS, NOT WORDS IN A SENTENCE. These three were links inside
+     prose and measured 12, 31 and 14 px tall - unusable on a phone, and reading
+     as references rather than as the things you are meant to press. */
   say(overlayPanel(`<div class="note note-warn"><strong>This file has no coordinates.</strong>
     A JPEG or PNG carries no position, and working out where a photograph was taken from the
     picture alone needs a trained model and a planet-wide reference index — not something a
-    browser can do, and guessing would be worse than asking.
-    <br><br>So: pan and zoom the map to the right place, press
-    <a href="#" id="up-fit" style="color:var(--accent)">fit to this view</a>, then
-    <a href="#" id="up-snap" style="color:var(--accent)">snap it to the imagery</a> —
-    that part <em>is</em> measurable, and it is the same correlation that put this
-    project's alignment at 0.52 m.</div>
-    <p class="segwhy" id="up-snapnote"></p>
-    <p class="segwhy"><a href="#" id="up-report" style="color:var(--accent)">Measure this
-    footprint</a> once it is in the right place.</p>`));
+    browser can do, and guessing would be worse than asking. Pan the map to the right place,
+    fit it, then snap: that part <em>is</em> measurable, and it is the same correlation that
+    put this project's alignment at 0.52 m.</div>
+    <div class="grp"><h2>Put it in the right place</h2>
+      <div class="row"><button id="up-fit">Fit to this view</button>
+                       <button id="up-snap">Snap to imagery</button></div>
+      <p class="segwhy" id="up-snapnote"></p>
+      <div class="row" style="margin-top:8px"><button id="up-report">Measure this footprint</button></div>
+    </div>`));
   wireOverlayPanel();
 }
 
