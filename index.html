@@ -1019,20 +1019,36 @@ document.addEventListener('keydown', e => {
    OpenStreetMap polygons with no zoom hint at all. They are different answers to
    the same question, so the honest control is "which one am I looking at",
    not "how many can I stack". */
+/* WHAT WAS REMOVED AND WHY. Places, infrastructure, natural land and land use
+   are gone from this control. They came from OpenStreetMap polygons whose
+   coverage is arbitrary — dense in some cities, empty in others — so they made
+   the map look like it had an opinion about ground it knows nothing about.
+
+   What is left is what survives scrutiny:
+
+   MEASURED BY PUBLISHED VALIDATION, not by us: of the three global 10 m land
+   cover products, Esri scores 75% overall accuracy, Dynamic World 72%, and ESA
+   WorldCover — the one Overture vectorises and therefore the one reachable from
+   a browser — scores 65%. It is the weakest of the three. Water is the strongest
+   class anywhere at 92%; built area reaches 83%, and the literature names
+   informal settlements specifically as where these products break down.
+
+   There is no global land cover finer than 10 m. Not at 5 m, not at 1 m; the
+   only 1 m work is national (China). So a land cover pixel here is 10 m across
+   while a median Imbaba building is 10 m wide — one pixel per building, from the
+   least accurate of three products, in the fabric it handles worst. That cannot
+   be fixed by rendering it differently, so it ships labelled rather than
+   quietly. The building footprints at ~0.3 m remain the only fine-grained
+   classification on this map. */
 const CONTEXT = [
-  {key:'none',      label:'None',            ids:[],                       dot:null},
-  {key:'landcover', label:'Land cover',      ids:['lc-fill'],              dot:'#2f7d4f',
-   why:'Vectorised ESA WorldCover, 11 classes. Coarse — it describes 10 m of ground.'},
-  {key:'land',      label:'Natural land',    ids:['land-fill'],            dot:'#8a9a7e',
-   why:'Trees, grass, scrub, sand and rock, from OpenStreetMap.'},
-  {key:'landuse',   label:'Land use',        ids:['lu-fill','lu-line'],    dot:'#c07a5a',
-   why:'What the land is used FOR — housing, farming, education, military.'},
-  {key:'water',     label:'Water',           ids:['wat-fill','wat-line'],  dot:'#2d7fd3',
-   why:'Rivers, lakes, reservoirs and canals.'},
-  {key:'infra',     label:'Infrastructure',  ids:['infra-line'],           dot:'#e0a34a',
-   why:'Bridges, piers, towers, barriers and transit structures.'},
-  {key:'places',    label:'Places',          ids:['plc-dot'],              dot:'#4d9fe8',
-   why:'Shops, clinics, schools and other points of interest. Zoom 14 and closer.'},
+  {key:'none',      label:'None',       ids:[],                      dot:null},
+  {key:'landcover', label:'Land cover', ids:['lc-fill'],             dot:'#2f7d4f',
+   why:'Vectorised ESA WorldCover, 11 classes at 10 m. Published accuracy 65% — '
+     + 'the weakest of the three global products, and weakest of all on informal '
+     + 'fabric. One pixel is about the size of one Imbaba building.'},
+  {key:'water',     label:'Water',      ids:['wat-fill','wat-line'], dot:'#2d7fd3',
+   why:'Rivers, lakes, reservoirs and canals. Water is the most reliably mapped '
+     + 'class in every published comparison, at about 92%.'},
 ];
 let ctxKey = 'none';
 
@@ -1049,8 +1065,9 @@ function setLayer(cfg, on){
   const el = document.querySelector(`.lyr[data-key="${cfg.key}"]`);
   if(el) el.setAttribute('aria-pressed', on ? 'true' : 'false');
 }
-const CTX_OPACITY = {'lc-fill':0.28,'land-fill':0.28,'lu-fill':0.20,'lu-line':0.7,
-  'wat-fill':0.42,'wat-line':0.9,'infra-line':0.85,'plc-dot':0.9};
+const CTX_OPACITY = {'lc-fill':0.28,'wat-fill':0.42,'wat-line':0.9};
+// retired from the UI but still fetched, because the area report reads them
+const CTX_DORMANT = ['land-fill','lu-fill','lu-line','infra-line','plc-dot'];
 /* THESE HIDE BY OPACITY, NOT BY visibility, AND THE REASON IS NOT COSMETIC.
    MEASURED: querySourceFeatures returns NOTHING for a layer set to
    visibility:none - MapLibre stops keeping tiles for layers it is not drawing.
@@ -1060,6 +1077,16 @@ const CTX_OPACITY = {'lc-fill':0.28,'land-fill':0.28,'lu-fill':0.20,'lu-line':0.
    "what is on this ground" regardless of what is currently on screen. */
 function setContext(key){
   ctxKey = key;
+  // dormant layers stay loaded so the report can still count them, but are
+  // never painted and never clickable
+  for(const id of CTX_DORMANT){
+    if(!map.getLayer(id)) continue;
+    map.setLayoutProperty(id,'visibility','visible');
+    const prop = id.endsWith('-line') ? 'line-opacity'
+               : id.endsWith('-dot')  ? 'circle-opacity' : 'fill-opacity';
+    map.setPaintProperty(id, prop, 0);
+    if(id === 'plc-dot') map.setPaintProperty(id,'circle-stroke-opacity', 0);
+  }
   for(const c of CONTEXT){
     const on = c.key === key;
     for(const id of c.ids){
@@ -1921,6 +1948,96 @@ function kVerdict(k){
   return ['severe access deficit','#e06a5a'];
 }
 
+/* ---------- everything inside the box, class by class ----------
+   The export used to be buildings-only, which made the area selector look like
+   a building tool with extra steps. A selected area is a piece of GROUND, and
+   everything known about that ground should come out of it. */
+const CLASS_LAYERS = [
+  {key:'water',      label:'Water',          src:'water',          colour:'#2d7fd3'},
+  {key:'land_cover', label:'Land cover',     src:'land_cover',     colour:'#2f7d4f'},
+  {key:'land',       label:'Natural land',   src:'land',           colour:'#8a9a7e'},
+  {key:'land_use',   label:'Land use',       src:'land_use',       colour:'#c07a5a'},
+  {key:'infra',      label:'Infrastructure', src:'infrastructure', colour:'#e0a34a'},
+  {key:'places',     label:'Places',         src:null, layer:'plc-dot', colour:'#4d9fe8'},
+];
+function classFeaturesIn(bb){
+  const hit = c => c[0]>=bb.w && c[0]<=bb.e && c[1]>=bb.s && c[1]<=bb.n;
+  const anyPt = (a,d) => d===0 ? hit(a) : a.some(x=>anyPt(x,d-1));
+  const DEPTH = {Point:0,MultiPoint:1,LineString:1,MultiLineString:2,Polygon:2,MultiPolygon:3};
+  const inBox = f => { const g=f.geometry; if(!g||!g.coordinates) return false;
+    const d=DEPTH[g.type]; if(d==null) return false;
+    try{ return anyPt(g.coordinates,d); }catch(e){ return false; } };
+  const out = {};
+  for(const c of CLASS_LAYERS){
+    let f = [];
+    try{
+      f = c.src ? map.querySourceFeatures('bse',{sourceLayer:c.src})
+                : (map.getLayer(c.layer) ? map.queryRenderedFeatures({layers:[c.layer]}) : []);
+    }catch(e){ f = []; }
+    const seen = new Set(), keep = [];
+    for(const x of f){
+      const id = x.properties && x.properties.id;
+      if(id && seen.has(id)) continue;
+      if(id) seen.add(id);
+      if(!inBox(x)) continue;
+      keep.push(x);
+    }
+    out[c.key] = keep;
+  }
+  return out;
+}
+/* one GeoJSON carrying every class, each feature tagged with the class it came
+   from, so a single file opens in QGIS as a complete description of the area */
+function classesGeoJSON(bb, cls){
+  const feats = [];
+  for(const c of CLASS_LAYERS){
+    for(const f of (cls[c.key] || [])){
+      const p = f.properties || {};
+      feats.push({type:'Feature', geometry:f.geometry, properties:{
+        class_family: c.key,
+        name: featureName(p),
+        subtype: p.subtype || null,
+        class: p.class || null,
+        category: p.basic_category || null,
+        source: (jsonProp(p,'sources')||[]).map(x=>x.dataset).join('; ') || null,
+        licence: (jsonProp(p,'sources')||[]).map(x=>x.license).join('; ') || null,
+        id: p.id || null
+      }});
+    }
+  }
+  return {type:'FeatureCollection', features:feats};
+}
+/* a colour-coded raster of the classes over the same grid as the building mask,
+   so the two line up pixel for pixel in any GIS */
+function renderClassMask(bb, cls){
+  const {W,H} = rasterGrid(bb);
+  const cv = document.createElement('canvas'); cv.width=W; cv.height=H;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+  // painted least-specific first so the more specific classes land on top
+  for(const c of [...CLASS_LAYERS].reverse()){
+    ctx.fillStyle = c.colour;
+    for(const f of (cls[c.key]||[])){
+      const g=f.geometry; if(!g) continue;
+      const polys = g.type==='Polygon' ? [g.coordinates]
+                  : g.type==='MultiPolygon' ? g.coordinates : null;
+      if(!polys) continue;
+      for(const rings of polys){
+        ctx.beginPath();
+        for(const ring of rings){
+          ring.forEach(([lng,lat],i)=>{
+            const x=(lng-bb.w)/(bb.e-bb.w)*W, y=(bb.n-lat)/(bb.n-bb.s)*H;
+            i ? ctx.lineTo(x,y) : ctx.moveTo(x,y);
+          });
+          ctx.closePath();
+        }
+        ctx.fill('evenodd');
+      }
+    }
+  }
+  return {cv, W, H};
+}
+
 /* ---------- the area report ----------
    Every figure here is MEASURED from the streamed geometry. Nothing is inferred,
    so nothing needs the estimated tag except where a height is involved. */
@@ -2130,7 +2247,18 @@ async function exportArea(bb, feats, st, everything){
       dl(`instances_${stamp}.pgw`, new Blob([worldFile(bb,W,H)], {type:'text/plain'}));
       dl(`mask_${stamp}.prj`, new Blob([PRJ_WGS84], {type:'text/plain'}));
       exportVisible(feats, `buildings_${stamp}.geojson`);
-      dl(`stats_${stamp}.csv`, new Blob([statsCSV(bb, st, W, H, gsd, nInst)], {type:'text/csv'}));
+      // every OTHER class on this ground, as vectors and as a matching raster
+      const cls = classFeaturesIn(bb);
+      const cg = classesGeoJSON(bb, cls);
+      if(cg.features.length)
+        dl(`classes_${stamp}.geojson`,
+           new Blob([JSON.stringify(cg)], {type:'application/geo+json'}));
+      const CM = renderClassMask(bb, cls);
+      dl(`classes_${stamp}.png`, await canvasBlob(CM.cv));
+      dl(`classes_${stamp}.pgw`, new Blob([worldFile(bb,CM.W,CM.H)], {type:'text/plain'}));
+      dl(`stats_${stamp}.csv`, new Blob([statsCSV(bb, st, W, H, gsd, nInst, cls)], {type:'text/csv'}));
+      dl(`README_${stamp}.txt`, new Blob([manifest(bb, st, W, H, gsd, nInst, cls, stamp)],
+         {type:'text/plain'}));
     }
   }catch(err){
     if(btn) btn.textContent = 'Export failed';
@@ -2139,8 +2267,15 @@ async function exportArea(bb, feats, st, everything){
   }
   if(btn){ btn.textContent = was; btn.disabled = false; }
 }
-function statsCSV(bb, st, W, H, gsd, nInst){
+function statsCSV(bb, st, W, H, gsd, nInst, cls){
   const BC = lastBC;
+  const clsRows = [];
+  if(cls) for(const c of CLASS_LAYERS){
+    const list = cls[c.key] || [];
+    const by = {};
+    for(const f of list){ const k=(f.properties.subtype||f.properties.class||'other'); by[k]=(by[k]||0)+1; }
+    for(const k in by) clsRows.push([`${c.key}:${k}`, by[k], 'count', 'measured']);
+  }
   const r = [
     ['metric','value','unit','kind'],
     ['west',bb.w,'deg','measured'], ['south',bb.s,'deg','measured'],
@@ -2166,10 +2301,63 @@ function statsCSV(bb, st, W, H, gsd, nInst){
     ['raster_width',W,'px','measured'], ['raster_height',H,'px','measured'],
     ['raster_gsd',gsd,'m_per_px','measured'],
     ['source','Google Open Buildings + Microsoft (VIDA) / Overture','','provenance'],
-    ['generated',new Date().toISOString(),'','provenance']
+    ['generated',new Date().toISOString(),'','provenance'],
+    ...clsRows
   ];
   return r.map(row => row.map(c =>
     typeof c === 'string' && /[",\n]/.test(c) ? `"${c.replace(/"/g,'""')}"` : c).join(',')).join('\n') + '\n';
+}
+
+/* A folder of eight files with cryptic names is not a deliverable. This says
+   what each one is, what it was computed from, and what it is NOT to be trusted
+   for - which is the same discipline the panel applies on screen. */
+function manifest(bb, st, W, H, gsd, nInst, cls, stamp){
+  const n = k => (cls[k]||[]).length;
+  return [
+`AREA EXPORT  ${stamp}`,
+`generated    ${new Date().toISOString()}`,
+`bounds       W ${bb.w}  S ${bb.s}  E ${bb.e}  N ${bb.n}  (WGS84)`,
+`area         ${st.km2.toFixed(3)} km2`,
+``,
+`FILES`,
+`  mask_${stamp}.png         two colours only: black background, white building.`,
+`  mask_${stamp}.pgw/.prj    georeferencing for the PNGs. Keep beside them.`,
+`  instances_${stamp}.png    one colour per building, ${nInst} of them.`,
+`  buildings_${stamp}.geojson  building footprints with area, perimeter, compactness.`,
+`  classes_${stamp}.geojson  water, land cover, natural land, land use,`,
+`                            infrastructure and places on this ground.`,
+`  classes_${stamp}.png      the same classes as a raster on the SAME grid as the`,
+`                            building mask, so they overlay pixel for pixel.`,
+`  stats_${stamp}.csv        every computed figure, each tagged measured or estimated.`,
+``,
+`RASTER        ${W} x ${H} px at ${gsd.toFixed(3)} m/px`,
+``,
+`WHAT IS IN THE BOX`,
+`  buildings   ${st.n}`,
+`  water       ${n('water')}`,
+`  land cover  ${n('land_cover')}`,
+`  natural     ${n('land')}`,
+`  land use    ${n('land_use')}`,
+`  infra       ${n('infra')}`,
+`  places      ${n('places')}`,
+``,
+`READ THIS BEFORE USING IT`,
+`  Buildings come from Google Open Buildings + Microsoft (via VIDA) and Overture,`,
+`  at roughly 0.3 m. They are the only fine-grained layer here.`,
+`  Land cover is vectorised ESA WorldCover at 10 m, published overall accuracy`,
+`  65% - the weakest of the three global 10 m products, and weakest of all on`,
+`  informal fabric. One pixel is about the width of one Imbaba building. Treat it`,
+`  as context, never as a per-building classification.`,
+`  Building coverage is measured from the UNION of rasterised footprints. The sum`,
+`  of polygon areas is also given and is larger, because two sources trace the`,
+`  same roof and adding their areas counts that ground twice.`,
+``,
+`LICENCES - attribution is required, not optional`,
+`  Buildings   CC BY-4.0 / ODbL   Google, Microsoft, VIDA, Overture`,
+`  Land, water Overture Maps, incl. data (c) OpenStreetMap contributors (ODbL)`,
+`  Land cover  ESA WorldCover (CC BY-4.0) via Overture`,
+`  Imagery     Esri World Imagery, under its terms of use`,
+``].join('\n');
 }
 
 /* ---------- export what is on screen, anywhere in the world ---------- */
@@ -2331,10 +2519,7 @@ async function onBuildingClick(e){
    Only buildings answered a click; water, land use, land cover and places drew
    but could not be interrogated, so half the map looked inert. Every context
    layer is now clickable and reports everything the source carries. */
-const CTX_CLICK = [
-  ['wat-fill','Water'], ['lu-fill','Land use'], ['lc-fill','Land cover'],
-  ['land-fill','Natural land'], ['plc-dot','Place'], ['infra-line','Infrastructure']
-];
+const CTX_CLICK = [['wat-fill','Water'], ['lc-fill','Land cover']];
 function jsonProp(p, k){
   try { return p[k] ? JSON.parse(p[k]) : null; } catch(e){ return null; }
 }
