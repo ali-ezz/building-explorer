@@ -314,7 +314,11 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       </div>
       <p class="segwhy" id="drawwhy"></p>
 
-      <div id="areatools">
+      <!-- hidden in the MARKUP, not only by applyDrawScope(). The default mode
+           is Everywhere, where Area does not belong, but applyDrawScope only
+           runs on map load - so the section was painted, then pulled away a
+           moment later. Start in the state the default mode implies. -->
+      <div id="areatools" hidden>
         <h2>Area</h2>
         <div class="row">
           <button id="area">Select area</button>
