@@ -147,10 +147,46 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
 .segwhy{margin:6px 0 0;font-size:10.5px;line-height:1.5;color:var(--faint)}
 @media (max-width:820px){ .seg button{min-height:44px;font-size:12.5px} }
 
+/* ---- PROSE IS ON DEMAND, NOT PERMANENT ----
+   MEASURED on the old panel: 1,155 characters of explanatory grey against 18
+   controls, and 342 px of the panel below the fold — so the Sources section and
+   the confidence slider were invisible, with nothing to suggest they existed.
+   Every paragraph was written to be read once and then became noise forever.
+
+   Each one now sits behind a "?" next to its heading. The reasoning is still
+   there, in the same words, one click away — nothing was deleted, it stopped
+   being shouted. */
+.yr .why-t{margin-left:8px}
+/* THE BUTTON IS 44 px; THE CIRCLE INSIDE IT IS 15. A 15 px control reads
+   correctly and cannot be tapped, and growing the hit area with a transparent
+   ::after does NOT work — measured, elementFromPoint 15 px below the mark
+   returned the parent, because a pseudo-element does not extend the element's
+   own hit-testing box. So the button itself is full size, negative margins keep
+   the visual spacing it had, and the circle is drawn by a ::before that takes
+   no part in hit testing. This project has now fixed an undersized touch target
+   three times, each on a newly added control, so it is handled where the
+   control is defined rather than discovered again later. */
+.why-t{all:unset;display:inline-block;cursor:pointer;position:relative;flex:none;
+  box-sizing:border-box;width:44px;height:44px;margin:-14px -14px -14px -8px;
+  color:var(--faint);font:9px/44px ui-sans-serif,system-ui;text-align:center;
+  transition:color .12s}
+.why-t::before{content:"";position:absolute;left:50%;top:50%;
+  width:15px;height:15px;transform:translate(-50%,-50%);
+  border:1px solid var(--line);border-radius:50%;transition:border-color .12s}
+.why-t:hover,.why-t[aria-expanded="true"]{color:var(--accent)}
+.why-t:hover::before,.why-t[aria-expanded="true"]::before{border-color:var(--accent)}
+.why-t:focus-visible{outline:2px solid var(--accent);outline-offset:-12px;border-radius:50%}
+.why-b{margin:5px 0 0;font-size:10.5px;line-height:1.55;color:var(--faint);
+  padding-left:9px;border-left:1px solid var(--line-soft)}
+.why-b[hidden]{display:none}
+.hrow{display:flex;align-items:center}
+
 /* ---- layer stack ---- */
 .lyrs{padding:11px 18px;border-bottom:1px solid var(--line)}
-.lyrs h2{margin:0 0 7px;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
+.lyrs h2{margin:0;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
   color:var(--faint);font-weight:700}
+.lyrs .hrow{margin-bottom:7px}
+.lyrs .hrow + .seg, .lyrs .hrow + .row{margin-top:0}
 /* Every block after the first gets the same separation, from ONE rule, whether
    the heading is a direct child of .lyrs or the first thing inside a section
    wrapper. The previous panel set margin-top inline on each h2, so the spacing
@@ -158,10 +194,14 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
    wrapped sections (Area, Export, Sources) matched no rule at all and ran
    straight into the block above them. */
 .lyrs > h2 + *{margin-top:0}
-.lyrs > h2:not(:first-child),
-.lyrs > div:not(:first-child) > h2:first-child{
-  margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft)}
-.lyrs > div:not(:first-child) > h2:first-child{margin-bottom:7px}
+/* Section separation is on the SECTION, not on its heading. The headings moved
+   inside a .hrow so a "?" could sit beside them, and the old rule — which
+   matched an h2 that was a direct child — silently stopped applying, leaving
+   Sources jammed against the Buildings control and Export against the
+   confidence slider. Targeting the wrapper cannot break that way again. */
+#srcblock, #exblock{
+  margin-top:15px;padding-top:13px;border-top:1px solid var(--line-soft)}
+#areatools{margin-top:2px}
 .lyrs .segwhy{margin-top:7px}
 #areatools .row, #exblock .row{margin-top:8px}
 #areatools[hidden], #exblock[hidden], #srcblock[hidden]{display:none}
@@ -299,73 +339,72 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <output id="yrv">2026</output>
       </div>
       <div class="capnote" id="capnote"></div>
-      <div class="row"><button id="sharp">Sharpest here</button></div>
-      <p class="segwhy" id="sharpnote"></p>
-      <p class="segwhy" id="sharphint">Searches Esri's archive for the best picture of
-        <em>this</em> ground — 14 of 196 releases, about 20 seconds. Newest is a
-        publication order, not a quality order: over Kibera the archive holds imagery
-        1.6× sharper and twice as well placed as the one on screen.</p>
       <div class="row">
-        <button id="upload">Upload image</button>
-        <button id="theme">Dark</button>
+        <button id="sharp">Sharpest here</button>
+        <button id="upload">Open a file…</button>
       </div>
+      <p class="segwhy" id="sharpnote"></p>
+      <p class="why-b" id="sharphint" hidden>Searches Esri's archive for the best picture of
+        <em>this</em> ground — 14 of 196 releases, about 20 seconds. Newest is a publication
+        order, not a quality order: over Kibera the archive holds imagery 1.6× sharper and
+        twice as well placed as the one on screen.</p>
       <input type="file" id="tif" hidden>
     </div>
+
     <div class="lyrs">
-      <h2>Outlines</h2>
+      <div class="hrow"><h2>Buildings</h2>
+        <button class="why-t" data-why="drawwhy" aria-expanded="false" aria-label="Why">?</button></div>
       <div class="seg" id="drawmode" role="radiogroup" aria-label="Where to draw building outlines">
         <button role="radio" aria-checked="true"  data-scope="all">Everywhere</button>
         <button role="radio" aria-checked="false" data-scope="sel">In selection</button>
         <button role="radio" aria-checked="false" data-scope="off">Off</button>
       </div>
-      <p class="segwhy" id="drawwhy"></p>
+      <p class="why-b" id="drawwhy" hidden></p>
 
-      <!-- hidden in the MARKUP, not only by applyDrawScope(). The default mode
-           is Everywhere, where Area does not belong, but applyDrawScope only
-           runs on map load - so the section was painted, then pulled away a
-           moment later. Start in the state the default mode implies. -->
       <div id="areatools" hidden>
-        <h2>Area</h2>
-        <div class="row">
+        <div class="row" style="margin-top:8px">
           <button id="area">Select area</button>
           <button id="areaclear">Clear</button>
         </div>
         <p class="segwhy" id="areahint">Drag a rectangle on the map. Escape cancels.</p>
       </div>
 
-      <div id="exblock">
-        <h2>Export</h2>
-        <p class="segwhy" id="extarget"></p>
-        <div class="row">
-          <button id="ex-all">Download all</button>
-          <button id="ex-mask">Mask only</button>
-        </div>
-        <p class="segwhy">One ZIP: the two-colour mask, a colour-coded instance mask,
-          the footprints as GeoJSON, every statistic as CSV, and world files so the
-          images land in the right place in QGIS. Built in your browser — nothing is
-          uploaded, and the README names every file in the archive.</p>
-      </div>
-
       <div id="srcblock">
-        <h2>Sources</h2>
+        <div class="hrow"><h2>Sources</h2>
+          <button class="why-t" data-why="srcwhy" aria-expanded="false" aria-label="Why">?</button></div>
         <div class="seg" id="srcmode" role="radiogroup" aria-label="Which building sources to show">
           <button role="radio" aria-checked="true"  data-mode="auto">Auto</button>
           <button role="radio" aria-checked="false" data-mode="pick">Select</button>
         </div>
         <div id="srcpick" hidden></div>
-        <p class="segwhy" id="srcwhy"></p>
+        <p class="why-b" id="srcwhy" hidden></p>
         <div class="yr" style="margin-top:9px">
-          <label for="conf">Min confidence</label>
+          <label for="conf">Confidence</label>
           <input type="range" id="conf" min="60" max="95" value="60" step="5">
           <output id="confv">off</output>
+          <button class="why-t" data-why="confwhy" aria-expanded="false" aria-label="Why">?</button>
         </div>
-        <p class="segwhy">Google scores every building it draws, from <b>0.65</b> to
-          <b>1.0</b> — nothing exists below 0.65, so the slider starts there. Raising it
-          drops uncertain outlines, and takes some real buildings with them: measured on
-          one view, 14,114 buildings at 0.65, 10,733 at 0.75, 5,480 at 0.90. Overture
-          buildings carry no score and are never filtered.</p>
+        <p class="why-b" id="confwhy" hidden>Google scores every building it draws, from
+          <b>0.65</b> to <b>1.0</b> — nothing exists below 0.65, so the slider starts there.
+          Raising it drops uncertain outlines and takes some real buildings with them:
+          measured on one view, 14,114 buildings at 0.65, 10,733 at 0.75, 5,480 at 0.90.
+          Overture buildings carry no score and are never filtered.</p>
       </div>
 
+      <div id="exblock">
+        <div class="hrow"><h2>Export</h2>
+          <button class="why-t" data-why="exwhy" aria-expanded="false" aria-label="Why">?</button></div>
+        <p class="segwhy" id="extarget"></p>
+        <div class="row">
+          <button id="ex-all">Download all</button>
+          <button id="ex-mask">Mask only</button>
+        </div>
+        <p class="why-b" id="exwhy" hidden>One ZIP: the two-colour mask with touching
+          buildings separated, a colour-coded instance mask, the footprints as GeoJSON,
+          every statistic as CSV, and world files so the images land in the right place in
+          QGIS. Built in your browser — nothing is uploaded, and the README names every file
+          in the archive.</p>
+      </div>
     </div>
     <div id="body"><p class="empty"><strong>Click any building</strong> to read everything
       its publisher records about it, or <strong>Select area</strong> to measure a
@@ -373,6 +412,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
     </div>
     <div class="foot">
       <span class="cred">Esri · Google · Microsoft · VIDA · Overture · OpenStreetMap</span>
+      <a href="#" id="theme">Dark</a>
       <a href="#" id="about">About the data</a>
     </div>
   </aside>
@@ -954,7 +994,7 @@ function applyTheme(){
   const b = document.getElementById('theme'); if(b) b.textContent = dark ? 'Light' : 'Dark';
 }
 on('sharp','click', findSharpest);
-on('theme','click',()=>{ dark=!dark; applyTheme(); });
+on('theme','click',e=>{ if(e&&e.preventDefault) e.preventDefault(); dark=!dark; applyTheme(); });
 applyTheme();
 on('area','click',()=>setDrawMode(!drawing));
 /* THE SLIDER USED TO START AT 0 AND TWO THIRDS OF IT DID NOTHING.
@@ -1037,6 +1077,26 @@ function buildLayerUI(){
   }
 }
 
+
+/* Every "?" shows the paragraph belonging to its section and nothing else, so
+   two open explanations cannot push the controls off screen together. */
+(function initWhy(){
+  const all = () => [...document.querySelectorAll('.why-t')];
+  for(const t of all()){
+    t.addEventListener('click', e => {
+      e.preventDefault();
+      const el = document.getElementById(t.dataset.why);
+      if(!el) return;
+      const show = el.hidden;
+      for(const o of all()){
+        const b = document.getElementById(o.dataset.why);
+        if(b && b !== el){ b.hidden = true; o.setAttribute('aria-expanded','false'); }
+      }
+      el.hidden = !show;
+      t.setAttribute('aria-expanded', String(show));
+    });
+  }
+})();
 
 /* ---------- which years are actually different pictures? ----------
    MEASURED over one dense Imbaba tile by hashing the bytes: 2014, 2015 and 2016 are
@@ -1265,7 +1325,7 @@ async function findSharpest(){
   const say = t => { const e = document.getElementById('sharpnote'); if(e) e.innerHTML = t; };
   if(btn){ btn.disabled = true; btn.textContent = 'Searching…'; }
   const hint = document.getElementById('sharphint');
-  if(hint) hint.hidden = true;                 // the note replaces it while running
+  if(hint) hint.hidden = true;                 // the live note replaces it while running
   try{
     const all = await loadWayback();
     const c = map.getCenter();
@@ -4104,7 +4164,7 @@ function removeOverlay(){
   if(map.getSource('upsrc')) map.removeSource('upsrc');
   overlay = null;
   const b = document.getElementById('upload');
-  if(b){ b.classList.remove('on'); b.textContent = 'Upload image'; }
+  if(b){ b.classList.remove('on'); b.textContent = 'Open a file…'; }
 }
 function placeOverlay(cv, bb, name, proj, geo){
   removeOverlay();
@@ -4383,6 +4443,10 @@ on('upload','click', ()=>{
     if(b) b.innerHTML = '<p class="empty">Image removed.</p>'; return; }
   document.getElementById('tif').click();
 });
+/* The file picker accepts anything and the router explains what it found, but
+   the button should still say what is worth opening. */
+(function(){ const b=document.getElementById('upload');
+  if(b) b.title = 'GeoTIFF, JPEG (EXIF GPS is read), PNG, GeoJSON, KML or CSV'; })();
 
 function overlayPanel(extra){
   const bb = overlay.bb;
