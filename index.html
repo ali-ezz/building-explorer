@@ -182,7 +182,7 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
 .hrow{display:flex;align-items:center}
 
 /* what a file brought with it, and how to let go of it */
-#loaded{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-soft)}
+#loaded{margin-top:9px}
 /* the section label lives outside .lyrs, so it needs the same rule stated here
    rather than inheriting a browser default h2 at 1.5em */
 #loaded h2{margin:0 0 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
@@ -217,7 +217,7 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
    matched an h2 that was a direct child — silently stopped applying, leaving
    Sources jammed against the Buildings control and Export against the
    confidence slider. Targeting the wrapper cannot break that way again. */
-#srcblock, #exblock{
+#srcblock, #exblock, #fileblock{
   margin-top:15px;padding-top:13px;border-top:1px solid var(--line-soft)}
 #areatools{margin-top:2px}
 .lyrs .segwhy{margin-top:7px}
@@ -359,7 +359,6 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       <div class="capnote" id="capnote"></div>
       <div class="row">
         <button id="sharp">Sharpest here</button>
-        <button id="upload">Open a file…</button>
       </div>
       <p class="segwhy" id="sharpnote"></p>
       <p class="why-b" id="sharphint" hidden>Searches Esri's archive for the best picture of
@@ -367,7 +366,6 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         order, not a quality order: over Kibera the archive holds imagery 1.6× sharper and
         twice as well placed as the one on screen.</p>
       <input type="file" id="tif" hidden>
-      <div id="loaded" hidden></div>
     </div>
 
     <div class="lyrs">
@@ -408,6 +406,25 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
           Raising it drops uncertain outlines and takes some real buildings with them:
           measured on one view, 14,114 buildings at 0.65, 10,733 at 0.75, 5,480 at 0.90.
           Overture buildings carry no score and are never filtered.</p>
+      </div>
+
+      <div id="fileblock">
+        <div class="hrow"><h2>Your file</h2>
+          <button class="why-t" data-why="filewhy" aria-expanded="false" aria-label="Why">?</button></div>
+        <div class="row"><button id="upload">Open a file…</button></div>
+        <p class="why-b" id="filewhy" hidden>A GeoTIFF lands at its own coordinates. A JPEG
+          is placed from its EXIF GPS when a drone wrote one, otherwise by you and then
+          snapped to the imagery. GeoJSON, KML and CSV are compared against the published
+          data building by building. Everything is read in this browser — no file is
+          uploaded anywhere.</p>
+        <div id="loaded" hidden></div>
+        <div id="imgctl" hidden>
+          <div class="yr" style="margin-top:9px">
+            <label for="imgop">Opacity</label>
+            <input type="range" id="imgop" min="10" max="100" value="100" step="5">
+            <output id="imgopv">100%</output>
+          </div>
+        </div>
       </div>
 
       <div id="exblock">
@@ -4191,6 +4208,7 @@ function kindPanel(file, k, extra){
    asking. Refining a placement the user has already made IS feasible, and is
    the same correlation that measured this project's alignment at 0.52 m. */
 let overlay = null;      // {name, bb, W, H, proj, canvas, geo}
+let imgOpacity = 1;      // how much of the map shows through an uploaded image
 
 /* ================= ONE PLACE THAT TAKES THINGS DOWN =================
    Every feature here added its own layers and its own state, and each one
@@ -4248,6 +4266,8 @@ function emptyBody(){
    Each loaded thing gets a chip with an ×; the row disappears when nothing is
    loaded, so it costs nothing when unused. */
 function loadedChips(){
+  const ctl = document.getElementById('imgctl');
+  if(ctl) ctl.hidden = !overlay;          // opacity only matters with a picture
   const host = document.getElementById('loaded');
   if(!host) return;
   const items = [];
@@ -4267,9 +4287,21 @@ function placeOverlay(cv, bb, name, proj, geo){
   removeOverlay();
   map.addSource('upsrc', {type:'image', url: cv.toDataURL('image/png'),
     coordinates: [[bb.w,bb.n],[bb.e,bb.n],[bb.e,bb.s],[bb.w,bb.s]]});
+  /* ON TOP, NOT UNDERNEATH. The overlay was inserted before 'ovt-fill', which
+     put it below every building outline and every street label — so an uploaded
+     photograph arrived buried under the outlines of somewhere else, with road
+     names printed across it. Whatever is under an uploaded image is not what
+     the user is looking at; the image is the subject the moment it is loaded.
+     It goes above everything, and an opacity slider decides how much of the map
+     shows through. */
   map.addLayer({id:'up-img', type:'raster', source:'upsrc',
-    paint:{'raster-opacity':0.95}}, 'ovt-fill');
+    paint:{'raster-opacity':imgOpacity}});
   overlay = {name, bb, W:cv.width, H:cv.height, proj, canvas:cv, geo};
+  // a new picture always arrives fully visible, whatever the last one was left at
+  imgOpacity = 1;
+  const opEl = document.getElementById('imgop'), opOut = document.getElementById('imgopv');
+  if(opEl) opEl.value = 100; if(opOut) opOut.textContent = '100%';
+  if(map.getLayer('up-img')) map.setPaintProperty('up-img','raster-opacity', 1);
   const b = document.getElementById('upload');
   if(b){ b.classList.add('on'); b.textContent = 'Remove image'; }
   loadedChips();
@@ -4456,6 +4488,7 @@ async function runModelOnOverlay(){
     map.addSource('mdlsrc', {type:'image', url:R.instC.toDataURL('image/png'),
       coordinates:[[overlay.bb.w,overlay.bb.n],[overlay.bb.e,overlay.bb.n],
                    [overlay.bb.e,overlay.bb.s],[overlay.bb.w,overlay.bb.s]]});
+    // and the model's reading sits above the picture it read
     map.addLayer({id:'mdl-img', type:'raster', source:'mdlsrc', paint:{'raster-opacity':0.55}});
     /* ⚠️ ALWAYS SCORED AGAINST THE PUBLISHED DATA, NEVER SHOWN ALONE. This
        model's quality on dense informal fabric is unmeasured, and the published
@@ -4538,6 +4571,12 @@ async function exportForOverlay(everything){
   await exportArea(bb, feats, st, everything, R);
 }
 
+on('imgop','input', e => {
+  imgOpacity = (+e.target.value)/100;
+  const o = document.getElementById('imgopv');
+  if(o) o.textContent = Math.round(imgOpacity*100) + '%';
+  if(map.getLayer('up-img')) map.setPaintProperty('up-img','raster-opacity', imgOpacity);
+});
 on('upload','click', ()=>{
   if(overlay){ removeOverlay(); const b=document.getElementById('body');
     if(b) b.innerHTML = '<p class="empty">Image removed.</p>'; return; }
