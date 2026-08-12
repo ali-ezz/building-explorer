@@ -7,6 +7,30 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.1.2] — 2026-08-12
+
+### Changed
+
+- **The image workspace describes the image and nothing else.** "Published data on this
+  ground" — show/hide the map's outlines over your picture, measure the ground under it,
+  and download the published mask on its grid — has been removed from it. Every one of
+  those is a statement about the *map*: the basemap, the published footprints, the
+  ground behind your file. None is about the file. What is left is what the file is,
+  where it sits, and what a model reads in it: three sections, five controls, and no map
+  vocabulary anywhere in the panel.
+- The map's outlines are still switched off while a picture is open and handed back
+  untouched when it closes — that now happens without a control, because it is not a
+  decision the image workspace should be putting to you.
+
+### Removed
+
+- `exportForOverlay()` and the `#im-cmp` section it served, along with the `measure` and
+  `export` entries in the file-kinds table that pointed at them — that table is shown to
+  the user as "what can be done with it", so an entry with no control behind it is a
+  promise the app breaks.
+
+---
+
 ## [1.1.1] — 2026-08-12
 
 ### Fixed
@@ -119,6 +143,7 @@ First public release.
 - English and romanised labels for Greek, Cyrillic, Arabic, Persian, Hebrew, Thai and
   Devanagari.
 
+[1.1.2]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.1.2
 [1.1.1]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.1.1
 [1.1.0]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.1.0
 [1.0.0]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.0.0

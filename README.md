@@ -10,8 +10,8 @@ One HTML file. No server, no database, no build step.
 [![Open the explorer](https://img.shields.io/badge/▶_Open_the_explorer-1f6fb2?style=for-the-badge)](https://ali-ezz.github.io/building-explorer/)
 
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-6fcf97)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.1-4d9fe8)](CHANGELOG.md)
-[![Single file](https://img.shields.io/badge/single_file-276_KB-8593a6)](index.html)
+[![Version](https://img.shields.io/badge/version-1.1.2-4d9fe8)](CHANGELOG.md)
+[![Single file](https://img.shields.io/badge/single_file-272_KB-8593a6)](index.html)
 [![No build step](https://img.shields.io/badge/build_step-none-8593a6)](#hosting-it-yourself)
 [![Built at NARSS](https://img.shields.io/badge/built_at-NARSS-e0a34a)](#where-this-came-from)
 
@@ -82,8 +82,8 @@ QGIS. Rendered in EPSG:3857, to match the imagery it was traced from.
 **Bring your own imagery.** A GeoTIFF lands at its own coordinates — WGS84, Web Mercator
 or **any UTM zone**, read from the file's own header and reprojected. A drone JPEG is
 placed from its EXIF GPS. A plain photograph you place, then snap to the imagery by
-correlation. Everything the app knows about that ground comes back on *your* file's exact
-pixel grid, so the mask drops onto it one pixel to one pixel.
+correlation. The image workspace describes the image and nothing else — the map's outlines
+switch off while it is open and are handed back untouched when you remove it.
 
 **Bring your own polygons.** GeoJSON, KML and CSV (points or WKT) are scored building by
 building against the published data — which agree, which you have and they do not, which

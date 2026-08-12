@@ -423,43 +423,19 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <p class="segwhy" id="up-snapnote"></p>
       </div>
 
-      <!-- ================= ONE SECTION FOR THE PUBLISHED DATA =================
-           There used to be a second, top-level "Export for this ground" heading
-           down at the bottom of this panel. That is a MAP control — it writes the
-           published footprints for a stretch of ground — and having it sit as its
-           own section inside the image workspace mirrored the map panel's Export
-           and read as though the image had two unrelated exports, one of which
-           belonged to the panel underneath.
+      <!-- ================= NOTHING ABOUT THE MAP LIVES IN HERE =================
+           There was a "Published data on this ground" section here: show/hide the
+           map's outlines over your picture, measure the ground under it, and download
+           the published mask on your image's grid. Every one of those is a statement
+           about the MAP — the basemap, the published footprints, the ground behind
+           your file — and none of them is about the file itself.
 
-           Showing outlines, measuring the ground and downloading it are three
-           things you do to ONE subject: the published data underneath your
-           picture. They are one section, in that order. What belongs to the
-           image itself — placement — and what belongs to the model — reading the
-           pixels — stay in their own sections, so every heading in this panel now
-           names a different subject rather than a different verb. -->
-      <div id="im-cmp">
-        <div class="hrow" style="margin-top:15px;padding-top:13px;border-top:1px solid var(--line-soft)">
-          <h2>Published data on this ground</h2>
-          <button class="why-t" data-why="im-exwhy" aria-expanded="false" aria-label="Why">?</button></div>
-        <p class="why-b" id="im-exwhy" hidden>The footprints Google, Microsoft and Overture
-          publish for exactly the ground your image covers. Show them over your picture to see
-          where they agree, measure them for the full area report, or download them rendered at
-          your image's own pixel grid and projection — so the mask drops onto your file one
-          pixel to one pixel. Two-colour mask with touching buildings separated, colour instance
-          mask, GeoJSON, statistics CSV and world files.</p>
-        <!-- OFF BY DEFAULT. The map's outlines are the map's, and drawing them over
-             a picture the moment it opens buries the thing you came to look at under
-             somebody else's tracing of the same ground. They are one press away, and
-             the map's own setting is remembered and handed back untouched when the
-             image is removed. -->
-        <div class="seg" id="im-outlines" role="radiogroup" aria-label="Show published outlines over your image">
-          <button role="radio" aria-checked="false" data-scope="all">Show outlines</button>
-          <button role="radio" aria-checked="true"  data-scope="off">Hide</button>
-        </div>
-        <div class="row" style="margin-top:8px"><button id="up-report">Measure this footprint</button></div>
-        <div class="row" style="margin-top:8px"><button id="up-all">Download all</button>
-                         <button id="up-mask">Mask only</button></div>
-      </div>
+           A workspace that opens because you loaded a picture should describe the
+           picture. What is left is exactly that: what the file is, where it sits, and
+           what a model reads in it. The map's outlines are still switched off while a
+           picture is open and handed back untouched when it closes; that now happens
+           without a control, because it is not a decision the image workspace should
+           be asking you to make. -->
 
       <div id="im-model">
         <div class="hrow" style="margin-top:15px;padding-top:13px;border-top:1px solid var(--line-soft)">
@@ -1220,7 +1196,7 @@ on('conf','input', e => {
 });
 on('areaclear','click',()=>clearSelection());
 function clearSelection(){
-  boxA = boxB = null; lastBox = null; boxFromOverlay = false;
+  boxA = boxB = null; lastBox = null;
   lastFeats = null; lastStats = null; lastRaster = null; lastBC = null;
   const bs = map.getSource('boxsrc'); if(bs) bs.setData({type:'FeatureCollection',features:[]});
   applyDrawScope();
@@ -1302,9 +1278,6 @@ function fillImagePanel(){
   // a georeferenced file does not need fitting; a photograph does
   const fit = document.getElementById('up-fit');
   if(fit) fit.hidden = !!overlay.geo;
-  const seg = document.getElementById('im-outlines');
-  if(seg) for(const o of seg.querySelectorAll('button'))
-    o.setAttribute('aria-checked', String(o.dataset.scope === drawScope));
 }
 /* A points CSV is not "3 of your polygons". The title used to call every feature
    a polygon whatever it was, and then the table underneath said "Your polygons 0
@@ -2120,7 +2093,6 @@ function setDrawMode(on){
     const bb = boxBounds();
     // a click without a drag is not a selection - require a real rectangle
     if(!bb || Math.abs(bb.e-bb.w) < 1e-6 || Math.abs(bb.n-bb.s) < 1e-6){ return; }
-    boxFromOverlay = false;                // the user drew this one
     lastBox = bb; setDrawMode(false); drawBox2(bb); applyDrawScope(); areaReport(bb);
   };
   map.on('load', ()=>{
@@ -4354,8 +4326,6 @@ function instancesFromProb(prob, W, H, thr, minPx){
 
      place     put it on the map at the right coordinates
      snap      refine a hand placement against the imagery, by correlation
-     measure   the full area report for the ground it covers
-     export    mask, instances, GeoJSON, CSV, world files - on ITS grid
      segment   run a building model on the picture itself
      compare   its polygons against the published ones, per building
      height    per-building height from 3D points
@@ -4372,13 +4342,17 @@ function instancesFromProb(prob, W, H, thr, minPx){
              control. Removed rather than left as an advertisement.
      export  was listed for GeoJSON, KML and CSV, and the vector workspace has
              one button in it: Remove them. Removed from the vector kinds.
+     measure / export
+             were listed for every raster and pointed at the "Published data on
+             this ground" section, which has since been taken out of the image
+             workspace entirely — measuring the ground under a picture and
+             downloading the published mask are statements about the MAP, and the
+             image workspace describes the image. Both removed with it.
 
    If a control is added later, the action goes back in the same commit. */
 const ACTIONS = {
   place:   {label:'Place on the map',        why:'position it from its own coordinates'},
   snap:    {label:'Snap to the imagery',     why:'refine the placement by correlation'},
-  measure: {label:'Measure this ground',     why:'the full area report for its footprint'},
-  export:  {label:'Export for this ground',  why:'mask and data on this file’s own pixel grid'},
   segment: {label:'Find buildings in it',    why:'run a building model on the picture'},
   compare: {label:'Compare with published',  why:'agree, missing, extra — per building'},
   height:  {label:'Read heights',            why:'per-building height from the points'},
@@ -4387,15 +4361,15 @@ const FILE_KINDS = [
   {ext:['tif','tiff'], kind:'raster-geo', label:'GeoTIFF',
    note:'Read with geotiff.js. If it carries georeferencing we place it exactly; if not it '
       + 'falls through to hand placement.',
-   actions:['place','measure','export','segment'], ready:true},
+   actions:['place','segment'], ready:true},
   {ext:['jpg','jpeg'], kind:'raster-exif', label:'JPEG',
    note:'No map coordinates in the pixels, but a drone usually writes GPS into EXIF. Where '
       + 'that exists we place it from there, then snap.',
-   actions:['place','snap','measure','export','segment'], ready:true},
+   actions:['place','snap','segment'], ready:true},
   {ext:['png','webp','bmp','gif'], kind:'raster-plain', label:'Plain image',
    note:'Carries no position at all. You place it, then snapping refines that against the '
       + 'imagery — measured to 0.1 m from 33 m out.',
-   actions:['snap','measure','export','segment'], ready:true},
+   actions:['snap','segment'], ready:true},
   {ext:['geojson','json'], kind:'vector', label:'GeoJSON',
    note:'Your own polygons. Drawn on the map and scored building by building against the '
       + 'published data — which agree, which are missing, which are extra.',
@@ -4512,11 +4486,9 @@ function removeVectors(){
    A selection the USER drew is theirs and must survive; one the image made for
    them belongs to the image. Which of the two it is, is recorded when it is made
    rather than guessed at afterwards by comparing coordinates. */
-let boxFromOverlay = false;
 function removeOverlay(){
   removeModelOverlay();          // the model belongs to the image it read
   restoreMapOutlines();          // and the map gets its own setting back
-  if(boxFromOverlay) clearSelection();
   if(map.getLayer('up-img')) map.removeLayer('up-img');
   if(map.getSource('upsrc')) map.removeSource('upsrc');
   overlay = null;
@@ -4848,8 +4820,8 @@ async function exportModelResult(everything){
                         () => exportArea(bb, feats, st, everything, R));
 }
 /* ---- BORROWED, NOT TAKEN ----
-   exportForOverlay() and exportModelResult() both need lastRaster / lastStats /
-   lastBC set, because statsCSV() and manifest() read them as module state. They
+   exportModelResult() needs lastRaster / lastStats / lastBC set, because
+   statsCSV() and manifest() read them as module state. It
    used to assign lastBox as well and never put it back, so exporting for an
    uploaded file left the app believing a rectangle was selected: the status line
    went on quoting the file's building count as "the selected area" after the file
@@ -4869,45 +4841,21 @@ async function withExportState(bb, feats, st, R, bc, run){
   }
 }
 
-/* ---- everything the app knows about this ground, on the upload's own grid ---- */
-async function exportForOverlay(everything){
-  if(!overlay) return;
-  const bb = overlay.bb;
-  dedupe();
-  const feats = buildingsIn(bb);
-  const st = areaStats(bb, feats);
-  /* THE GRID IS THE UPLOAD'S, NOT OURS. A mask "covering about the same area"
-     is not much use; one at the photograph's exact width, height and projection
-     drops onto it pixel for pixel in any GIS. */
-  const R = renderMasks(bb, feats, {W:overlay.W, H:overlay.H, proj:overlay.proj});
-  st.cover = R.builtFraction;
-  st.overlap = st.bcr > 0 ? Math.max(0, 1 - st.cover / st.bcr) : 0;
-  let bc = null;
-  try { bc = blockComplexity(bb, feats); } catch(e){ bc = null; }
-  await withExportState(bb, feats, st, R, bc,
-                        () => exportArea(bb, feats, st, everything, R));
-}
-
 on('im-remove','click', ()=>{ removeOverlay(); emptyBody(); });
 on('vec-remove','click', ()=>{ removeVectors(); emptyBody(); });
-/* ---- A WORKSPACE CONTROL MUST NOT EDIT THE ONE BEHIND IT ----
-   This toggle wrote straight into drawScope — the MAP's setting. So hiding the
-   outlines while looking at your photograph silently changed what the map would
-   show after the photograph was gone, and the Buildings control you returned to
-   disagreed with the map it was supposed to describe. It was the image panel
-   reaching through and editing the map panel.
-
-   The map's choice is remembered on entry and restored on exit, so the image
-   workspace borrows the setting for as long as it is open and gives it back
-   untouched. */
+/* ---- THE MAP'S SETTING IS BORROWED, NOT TAKEN ----
+   This began as a toggle in the image panel that wrote straight into drawScope —
+   the MAP's setting — so hiding the outlines while looking at your photograph
+   silently changed what the map would show after the photograph was gone. The
+   toggle is gone now along with the rest of the map's business in that panel, but
+   the borrowing remains and is the reason it can: opening a picture switches the
+   map's outlines off, and removing it hands the map back exactly the setting it
+   had, so nothing the image workspace does survives it. */
 let scopeBeforeImage = null;
 function setImageOutlines(scope){
   if(scopeBeforeImage === null) scopeBeforeImage = drawScope;
   drawScope = scope;
   applyDrawScope();
-  const seg = document.getElementById('im-outlines');
-  if(seg) for(const o of seg.querySelectorAll('button'))
-    o.setAttribute('aria-checked', String(o.dataset.scope === scope));
 }
 function restoreMapOutlines(){
   if(scopeBeforeImage === null) return;
@@ -4915,13 +4863,6 @@ function restoreMapOutlines(){
   scopeBeforeImage = null;
   applyDrawScope();
 }
-(function(){ const seg = document.getElementById('im-outlines'); if(!seg) return;
-  for(const b of seg.querySelectorAll('button')){
-    const go = () => setImageOutlines(b.dataset.scope);
-    b.addEventListener('click', go);
-    b.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } });
-  }
-})();
 on('imgop','input', e => {
   imgOpacity = (+e.target.value)/100;
   const o = document.getElementById('imgopv');
@@ -4956,13 +4897,8 @@ function overlayPanel(extra){
    than re-bound every time the body is rewritten — the body no longer contains
    any of these controls. */
 (function wireImageWorkspace(){
-  on('up-all','click', ()=>exportForOverlay(true));
-  on('up-mask','click', ()=>exportForOverlay(false));
   on('mdl-run','click', runModelOnOverlay);
   on('mdl-export','click', ()=>exportModelResult(true));
-  on('up-report','click', ()=>{ if(!overlay) return;
-    boxFromOverlay = true;                 // the image made this box, not the user
-    drawBox2(overlay.bb); areaReport(overlay.bb); });
   on('up-snap','click', ()=>snapOverlay());
   on('up-fit','click', ()=>{ if(!overlay) return;
     const b=map.getBounds();
