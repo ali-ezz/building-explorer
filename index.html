@@ -434,14 +434,28 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <output id="yrv">2026</output>
       </div>
       <div class="capnote" id="capnote"></div>
+      <!-- ⚠️ THIS EXPLANATION WAS UNREACHABLE. #sharphint ships `hidden`, and the only
+           code that ever touched it set hidden = true again on each run — there was no
+           "?" anywhere pointing at it, so the paragraph below has never once been seen
+           by a user. Every other section in this panel has one; the control that takes
+           70–100 seconds and whose whole premise is counter-intuitive ("newest is not
+           best") was the one without. -->
       <div class="row">
         <button id="sharp">Sharpest here</button>
+        <button class="why-t" data-why="sharphint" aria-expanded="false" aria-label="Why">?</button>
       </div>
       <p class="segwhy" id="sharpnote"></p>
+      <!-- ⚠️ "about 20 seconds" WAS OPTIMISTIC BY FOUR TIMES. Re-measured end to end on
+           one connection: 70 s over Kibera, 98 s over Imbaba. Fourteen metadata calls
+           against a browser that opens six connections to one host is simply not a
+           twenty-second job, and a control that says 20 and takes 98 reads as hung. The
+           button reports its own progress while it runs, so the honest thing is a range
+           and the reason it varies. -->
       <p class="why-b" id="sharphint" hidden>Searches Esri's archive for the best picture of
-        <em>this</em> ground — 14 of 196 releases, about 20 seconds. Newest is a publication
-        order, not a quality order: over Kibera the archive holds imagery 1.6× sharper and
-        twice as well placed as the one on screen.</p>
+        <em>this</em> ground — 14 of 196 releases. Measured at <b>70–100 seconds</b>,
+        depending on your connection; it counts the releases off as it goes. Newest is a
+        publication order, not a quality order: over Kibera the archive holds imagery
+        1.6× sharper and twice as well placed as the one on screen.</p>
       <input type="file" id="tif" hidden>
     </div>
 
@@ -1493,12 +1507,16 @@ async function findSharpest(){
   try{
     const all = await loadWayback();
     const c = map.getCenter();
-    /* A SPREAD, NOT THE WHOLE ARCHIVE. 196 releases at roughly a second each,
-       against a browser that opens six connections to one host, is half a
-       minute of waiting - measured, 30 s for 24 samples. Fourteen finds the
+    /* A SPREAD, NOT THE WHOLE ARCHIVE. 196 releases, against a browser that
+       opens six connections to one host, is many minutes of waiting — measured
+       end to end, fourteen of them already costs 70 s over Kibera and 98 s over
+       Imbaba, so the whole archive is out of the question. Fourteen finds the
        good frames (the archive changes slowly; neighbouring releases usually
-       carry the identical picture) and reports progress while it works, so the
-       wait is visible rather than a frozen button. */
+       carry the identical picture) and progress is reported while it works, so
+       the wait is visible rather than a frozen button.
+
+       The note here used to read "30 s for 24 samples", and the hint beside the
+       button promised twenty seconds. Neither survived being timed end to end. */
     const step = Math.max(1, Math.round(all.length/13));
     const pick = all.filter((_,i) => i % step === 0).slice(0, 14);
     if(pick.indexOf(all[0]) < 0) pick.unshift(all[0]);

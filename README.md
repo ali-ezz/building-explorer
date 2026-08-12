@@ -1,9 +1,21 @@
+<div align="center">
+
 # Global Building Explorer
 
 **Every building on Earth, on one map — with its measurements, its height, and its
-neighbours. One HTML file, 268 KB. No server, no database, no build step.**
+neighbours.**
 
-### ▶ [Open the explorer](https://ali-ezz.github.io/building-explorer/)
+One HTML file. No server, no database, no build step.
+
+[![Open the explorer](https://img.shields.io/badge/▶_Open_the_explorer-1f6fb2?style=for-the-badge)](https://ali-ezz.github.io/building-explorer/)
+
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-6fcf97)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.1.0-4d9fe8)](CHANGELOG.md)
+[![Single file](https://img.shields.io/badge/single_file-269_KB-8593a6)](index.html)
+[![No build step](https://img.shields.io/badge/build_step-none-8593a6)](#hosting-it-yourself)
+[![Built at NARSS](https://img.shields.io/badge/built_at-NARSS-e0a34a)](#where-this-came-from)
+
+</div>
 
 ![The explorer over Imbaba, Cairo — a building selected, its record open](preview.jpg)
 
@@ -12,7 +24,24 @@ and Overture contributors.</sub>
 
 ---
 
+## Try it in thirty seconds
+
+1. **[Open it](https://ali-ezz.github.io/building-explorer/)** — it lands over Imbaba, Cairo.
+2. **Click any building.** Its record opens: area, perimeter, compactness, how many
+   buildings physically touch it, whether it fronts a street.
+3. **Switch Buildings to "In selection", drag a rectangle.** You get the neighbourhood's
+   density, coverage and block complexity.
+4. **Press "Download all".** A ZIP lands with the two-colour mask, the instance mask, the
+   footprints as GeoJSON, the statistics as CSV, and world files so it opens in QGIS in
+   the right place.
+
+Nothing is uploaded and nothing is stored. Everything above is computed in your browser.
+
+---
+
 ## What it does
+
+### On the map
 
 **Click any building** and read its record: footprint area, perimeter, compactness,
 the **exact number of buildings physically touching it**, height in 2023 and 2020, an
@@ -22,15 +51,20 @@ estimate of storeys, and its share of the built volume around it.
 Where two years turn out to be the same photograph, the app says so rather than
 letting you wonder why nothing changed.
 
-**Go anywhere.** Search any place on Earth, or use the find-me button when you are
-standing in the area you are surveying.
+**Find the best picture, not the newest one.** The archive holds 196 releases and the
+newest is a publication order, not a quality order. "Sharpest here" searches it for
+*this* ground — over Kibera it finds imagery 1.6× sharper and twice as well placed as
+the one on screen.
 
-**Share a view.** The map position lives in the URL — copy the address bar and whoever
-opens it lands in exactly the same place, at the same zoom.
+**Go anywhere.** Search any place on Earth, or use the find-me button when you are
+standing in the area you are surveying. The map position lives in the URL, so a view can
+be sent to a colleague as a link.
 
 **Read it in English.** Street and place names appear in English wherever the data has
 one, and are romanised character by character where it does not, so Greek, Cyrillic,
 Arabic, Persian, Hebrew, Thai and Devanagari all render in Latin script.
+
+### As an instrument
 
 **Measure a neighbourhood.** Drag a rectangle and get its count, density, footprint
 distribution, how much ground is actually under a building, and **block complexity** —
@@ -43,17 +77,17 @@ separated by a one-pixel seam, a colour instance mask on the same grid, the foot
 as GeoJSON, every figure as CSV, and world files plus `.prj` so it lands correctly in
 QGIS. Rendered in EPSG:3857, to match the imagery it was traced from.
 
-**Find the best picture, not the newest one.** The archive holds 196 releases and the
-newest is a publication order, not a quality order. "Sharpest here" searches it for
-*this* ground — over Kibera it finds imagery 1.6× sharper and twice as well placed as
-the one on screen.
+### With your own data
 
-**Bring your own data.** A GeoTIFF lands at its own coordinates — WGS84, Web Mercator or
-any UTM zone, read from the file's own header and reprojected; a drone JPEG is placed
-from its EXIF GPS; a plain photograph you place and then snap to the imagery by
-correlation. GeoJSON, KML and CSV are scored building by building against the published
-data — which agree, which you have and they do not, which they have and you do not.
-Everything is read in your browser; there is no server here to upload a file to.
+**Bring your own imagery.** A GeoTIFF lands at its own coordinates — WGS84, Web Mercator
+or **any UTM zone**, read from the file's own header and reprojected. A drone JPEG is
+placed from its EXIF GPS. A plain photograph you place, then snap to the imagery by
+correlation. Everything the app knows about that ground comes back on *your* file's exact
+pixel grid, so the mask drops onto it one pixel to one pixel.
+
+**Bring your own polygons.** GeoJSON, KML and CSV (points or WKT) are scored building by
+building against the published data — which agree, which you have and they do not, which
+they have and you do not. Matched by centroid-inside-polygon, not by overlapping boxes.
 
 **Read the picture itself.** A public 15 MB segmentation model, run in the browser on
 your own image — the one place this app looks at pixels rather than re-serving what
@@ -68,7 +102,7 @@ Works on a phone, a tablet and a desktop, in a light or a dark theme.
 
 | | |
 |---|---|
-| **Measured** | footprint geometry, area, perimeter, compactness, touching neighbours, the source's own confidence |
+| **Measured** | footprint geometry, area, perimeter, compactness, touching neighbours, counts, density, coverage, block complexity, the source's own confidence |
 | **Estimated** | **height** — from a ~76 m grid, so it describes the block rather than the individual roof, and reads about 2 m low against finer data; **floors** — height ÷ 3.0 m, an estimate built on an estimate; **population share** — each building's share of the local built volume, to multiply by a total you trust, and **never a headcount** |
 
 Every estimated figure carries that caveat in the panel itself, next to the number.
@@ -82,10 +116,15 @@ polygons sitting on a building the other source had already drawn was 74% over I
 90% over Cairo and 71% over Lagos — which is why buildings appeared to carry several
 outlines stacked on them. Neither source can simply be dropped, because which one is
 better flips by place: 634 buildings against 208 over Imbaba, but 32 against 253 over
-Paris, and none at all over Beijing. The explorer picks the denser source for the
-current view and hides only the *overlapping* polygons of the other, so coverage still
-grows — Imbaba's 842 outlines resolve to 681 real buildings, 47 more than the best
-single source alone.
+Paris, and none at all over Beijing. The explorer draws the denser product for the
+current view, so no roof is outlined twice, and the other is one click away under
+**Sources** — where turning both on is an explicit choice to see where they disagree.
+
+**Position is bounded by the imagery, not by the outline.** Measured across 32 places:
+aerial-survey cities (Johannesburg, New York, Berlin) are accurate to 0.4–0.6 m, and
+satellite coverage — most of the world — to **8.47 m**. A footprint traced from a
+picture inherits that picture's accuracy however precise its outline looks. The panel
+says so, per area, next to the numbers it bounds.
 
 **Some imagery years are the same photograph.** Comparing tile bytes over Imbaba, 2014,
 2015 and 2016 are identical, and so are 2025 and 2026 — thirteen year options, ten real
@@ -107,10 +146,11 @@ warns you when the two drift apart.
 | Imagery | Esri World Imagery Wayback | Esri terms |
 | Roads, divisions | Overture Maps / OpenStreetMap | ODbL |
 | Place search | Nominatim / OpenStreetMap | ODbL |
+| Segmentation model | geobase, via geoai.js | MIT |
 
-The in-app **(i)** control and the "Data & licences" panel carry the same credits.
-Keep both in any copy you publish or redistribute. Full detail, with links and the
-software licences, is in **[ATTRIBUTION.md](ATTRIBUTION.md)**.
+The **About the data** panel in the app carries the same credits, and so does the README
+inside every export. Keep them in any copy you publish or redistribute. Full detail, with
+links and the software licences, is in **[ATTRIBUTION.md](ATTRIBUTION.md)**.
 
 **Requires an internet connection.** Nothing is bundled — every layer streams from its
 publisher at the moment you look at it. That is what keeps one file covering the whole
@@ -150,30 +190,28 @@ validation — is maintained separately and is not public.
 
 ---
 
-## Deploying an update
+## Working on it
 
-This repository holds only what is published: `index.html` and its licences.
-
-`index.html` was originally generated from the private project repository and pushed
-here as a subtree. **It is now also edited directly in this repository** — the recent
-history is commits against this file. That means the two copies can diverge, and a
-`git subtree push` from the private side would silently overwrite work done here.
-
-So, whichever way you are working, make it the one way:
+**This repository is the working copy.** `index.html` originated from a generator in the
+private project repository, but it is edited directly here now and the history is commits
+against this file.
 
 ```bash
-# editing here (what the recent history does)
 git add index.html && git commit -m "..." && git push origin main
-
-# regenerating from the private repository — pull this file back FIRST,
-# or the edits made here are lost
-python3 scripts/build_global_app.py data/deliverable/global_app.html
-cp data/deliverable/global_app.html site/index.html
-git add site && git commit -m "site: update"
-git push origin main && git subtree push --prefix site explorer main
 ```
 
 GitHub Pages rebuilds within a minute or two.
+
+> ⚠️ **Do not `git subtree push` over this repository from the private side.** Work now
+> exists only here, and a subtree push would silently overwrite it. If the generator is
+> ever re-run, merge this file into it rather than over it.
+
+There is no build step and no test runner in this repository — it is one document. Open
+`index.html` from any static server and drive it:
+
+```bash
+python3 -m http.server 8765     # then open http://localhost:8765/index.html
+```
 
 ## Hosting it yourself
 
