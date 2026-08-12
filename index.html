@@ -345,6 +345,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
          it was three sections and a scroll away from the heading it belongs
          to. It stays put while the controls below it scroll. -->
     <div id="status">Loading…</div>
+    <div id="scroll">
     <!-- ================= THE SIDEBAR IS MODAL =================
          Showing every control at once was wrong the moment a file could be
          loaded: an image workspace and a world-map workspace are different
@@ -400,7 +401,6 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <div class="row"><button id="mdl-run">Find buildings in it</button>
                          <button id="mdl-export">Export that</button></div>
         <p class="segwhy" id="mdl-note"></p>
-        <div id="mdl-cmp"></div>
       </div>
 
       <div id="im-export">
@@ -421,7 +421,6 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       <div id="vec-meta"></div>
       <div class="row" style="margin-top:8px"><button id="vec-remove">Remove them</button></div>
     </div>
-    <div id="scroll">
     <div class="tools" data-mode="map">
       <div class="field">
         <input type="text" id="place" placeholder="Search any place on Earth">
@@ -1225,6 +1224,9 @@ function fillImagePanel(){
   // a georeferenced file does not need fitting; a photograph does
   const fit = document.getElementById('up-fit');
   if(fit) fit.hidden = !!overlay.geo;
+  const seg = document.getElementById('im-outlines');
+  if(seg) for(const o of seg.querySelectorAll('button'))
+    o.setAttribute('aria-checked', String(o.dataset.scope === drawScope));
 }
 function fillVectorPanel(){
   if(!userVectors) return;
@@ -4360,6 +4362,7 @@ function removeVectors(){
 }
 function removeOverlay(){
   removeModelOverlay();          // the model belongs to the image it read
+  restoreMapOutlines();          // and the map gets its own setting back
   if(map.getLayer('up-img')) map.removeLayer('up-img');
   if(map.getSource('upsrc')) map.removeSource('upsrc');
   overlay = null;
@@ -4630,11 +4633,19 @@ async function runModelOnOverlay(){
     }
     const iou = (both+onlyModel+onlyPub) ? both/(both+onlyModel+onlyPub) : 0;
     const m2 = gsd*gsd;
-    note(`<b>${count.toLocaleString()}</b> buildings read from your picture in
-      ${(modelResult.ms/1000).toFixed(1)} s.
-      <a href="#" id="mdl-off" style="color:var(--accent)">hide overlay</a>`);
-    const host = document.getElementById('mdl-cmp');
-    if(host) host.innerHTML = `<table>
+    note(`<b>${count.toLocaleString()}</b> found · ${(modelResult.ms/1000).toFixed(1)} s ·
+      <a href="#" id="mdl-off" style="color:var(--accent)">hide overlay</a>
+      <span style="color:var(--faint)">— the comparison is below</span>`);
+    /* THE COMPARISON GOES IN THE BODY, NOT THE SIDEBAR. It is a five-row table
+       and a paragraph of caveat — measured at 570 px, which turned the image
+       workspace into a 1,307 px column of controls you had to scroll past to
+       reach the export. Controls belong in the panel; results belong in the
+       reading area, which is what it is for. */
+    const host = document.getElementById('body');
+    if(host) host.innerHTML = `<p class="bid">${overlay.name}</p>
+      <span class="chip">${count.toLocaleString()} read from your picture</span>
+      <span class="chip">${(modelResult.ms/1000).toFixed(1)} s</span>
+      <div class="grp"><h2>Your image against the published data</h2><table>
       ${fmtRow('From your image', `<span class="num">${count.toLocaleString()}</span> buildings`,
         `at ${gsd.toFixed(2)} m per pixel, anything under 8 m² discarded`)}
       ${fmtRow('Published here', `<span class="num">${pub.length.toLocaleString()}</span> buildings`,
@@ -4652,7 +4663,7 @@ async function runModelOnOverlay(){
     the ground.</strong> The weights are public and general-purpose, trained on aerial
     imagery; every published comparison names dense informal settlement as where such
     models break down. Treat the agreement figure above as the measurement, and the count
-    as a proposal.</div>`;
+    as a proposal.</div></div>`;
     on('mdl-off','click', e => { e.preventDefault();
       // hides the painting, keeps the result - the chip still offers a real removal
       if(map.getLayer('mdl-img')) map.removeLayer('mdl-img');
@@ -4697,13 +4708,34 @@ async function exportForOverlay(everything){
 
 on('im-remove','click', ()=>{ removeOverlay(); emptyBody(); });
 on('vec-remove','click', ()=>{ removeVectors(); emptyBody(); });
-/* Outlines over your image: the same three-state control the map has, reduced
-   to the two states that mean anything here. */
+/* ---- A WORKSPACE CONTROL MUST NOT EDIT THE ONE BEHIND IT ----
+   This toggle wrote straight into drawScope — the MAP's setting. So hiding the
+   outlines while looking at your photograph silently changed what the map would
+   show after the photograph was gone, and the Buildings control you returned to
+   disagreed with the map it was supposed to describe. It was the image panel
+   reaching through and editing the map panel.
+
+   The map's choice is remembered on entry and restored on exit, so the image
+   workspace borrows the setting for as long as it is open and gives it back
+   untouched. */
+let scopeBeforeImage = null;
+function setImageOutlines(scope){
+  if(scopeBeforeImage === null) scopeBeforeImage = drawScope;
+  drawScope = scope;
+  applyDrawScope();
+  const seg = document.getElementById('im-outlines');
+  if(seg) for(const o of seg.querySelectorAll('button'))
+    o.setAttribute('aria-checked', String(o.dataset.scope === scope));
+}
+function restoreMapOutlines(){
+  if(scopeBeforeImage === null) return;
+  drawScope = scopeBeforeImage;
+  scopeBeforeImage = null;
+  applyDrawScope();
+}
 (function(){ const seg = document.getElementById('im-outlines'); if(!seg) return;
   for(const b of seg.querySelectorAll('button')){
-    const go = () => { for(const o of seg.querySelectorAll('button'))
-        o.setAttribute('aria-checked', String(o === b));
-      drawScope = b.dataset.scope; applyDrawScope(); };
+    const go = () => setImageOutlines(b.dataset.scope);
     b.addEventListener('click', go);
     b.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } });
   }
