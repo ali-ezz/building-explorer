@@ -86,6 +86,12 @@ header{padding:15px 18px 13px;border-bottom:1px solid var(--line)}
 h1{margin:0;font-size:14.5px;font-weight:600;letter-spacing:-.01em}
 .sub{margin:3px 0 0;font-size:11.5px;color:var(--dim)}
 
+/* ⚠️ THE `hidden` ATTRIBUTE LOSES TO AN EXPLICIT `display`. .tools sets
+   display:flex, so setting hidden on it did nothing at all and the search box,
+   the imagery slider and "Sharpest here" stayed on screen underneath the image
+   workspace — the modal panel was only half modal, and the half that leaked
+   was the half with a display rule. Stated once, for every panel. */
+[data-panel][hidden]{display:none !important}
 .tools{padding:13px 18px;border-bottom:1px solid var(--line);display:flex;
   flex-direction:column;gap:11px}
 .field{position:relative}
@@ -353,7 +359,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
          and the world export sat above controls that had nothing to do with
          them. A mode swaps the whole column and puts it back on removal, so
          there is exactly one set of controls for the thing you are doing. -->
-    <div class="lyrs" data-mode="image" hidden>
+    <div class="lyrs" data-panel="image" hidden>
       <div class="hrow"><h2 id="im-title">Your image</h2></div>
       <div id="im-meta"></div>
       <div class="row" style="margin-top:8px"><button id="im-remove">Remove image</button></div>
@@ -416,12 +422,12 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       </div>
     </div>
 
-    <div class="lyrs" data-mode="vectors" hidden>
+    <div class="lyrs" data-panel="vectors" hidden>
       <div class="hrow"><h2 id="vec-title">Your polygons</h2></div>
       <div id="vec-meta"></div>
       <div class="row" style="margin-top:8px"><button id="vec-remove">Remove them</button></div>
     </div>
-    <div class="tools" data-mode="map">
+    <div class="tools" data-panel="map">
       <div class="field">
         <input type="text" id="place" placeholder="Search any place on Earth">
         <kbd>/</kbd>
@@ -443,7 +449,7 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
       <input type="file" id="tif" hidden>
     </div>
 
-    <div class="lyrs" data-mode="map">
+    <div class="lyrs" data-panel="map">
       <div class="hrow"><h2>Buildings</h2>
         <button class="why-t" data-why="drawwhy" aria-expanded="false" aria-label="Why">?</button></div>
       <div class="seg" id="drawmode" role="radiogroup" aria-label="Where to draw building outlines">
@@ -1193,8 +1199,11 @@ function panelMode(){
 }
 function applyPanelMode(){
   const m = panelMode();
-  for(const el of document.querySelectorAll('[data-mode]'))
-    el.hidden = el.dataset.mode !== m;
+  /* data-PANEL, not data-mode: the Sources segmented control already uses
+     data-mode="auto"/"pick" on its buttons, so the old selector was grabbing
+     those too and setting hidden on them. */
+  for(const el of document.querySelectorAll('[data-panel]'))
+    el.hidden = el.dataset.panel !== m;
   if(m === 'image') fillImagePanel();
   if(m === 'vectors') fillVectorPanel();
   // an explanation left open in a hidden panel should not reopen with it
@@ -4760,19 +4769,15 @@ on('upload','click', ()=>{
    sidebar, which meant two elements with the same id — getElementById returns
    the first, so the copies in the body were silently dead controls. The
    sidebar owns the actions; the body says what the file is. */
+/* THE BODY DOES NOT REPEAT THE PANEL. Name, size, resolution, extent, position
+   and grid are all stated in the sidebar; printing them again here was the same
+   facts twice on one screen. What is left is the thing the sidebar has no room
+   for: what to do about this particular file. */
 function overlayPanel(extra){
-  const bb = overlay.bb;
-  const km2 = areaKm2(bb);
-  const gsd = (bb.e-bb.w)*Math.cos((bb.n+bb.s)/2*Math.PI/180)*111320/overlay.W;
-  return `<p class="bid">${overlay.name}</p>
-    <span class="chip">${overlay.geo ? (overlay.exif ? 'placed from EXIF GPS' : 'georeferenced')
-                                     : 'placed by hand'}</span>
-    <span class="chip">${overlay.W} × ${overlay.H} px</span>
-    <span class="chip">${gsd.toFixed(2)} m/px</span>
-    ${extra || ''}
+  return `${extra || ''}
     <div class="note note-info"><strong>Your file stayed on this machine.</strong>
-    There is no server in this application to upload it to. The controls for it are in the
-    panel above; removing it puts the map controls back.</div>`;
+    There is no server in this application to upload it to. Its controls are in the panel
+    above; removing it puts the map controls back.</div>`;
 }
 /* The image workspace lives in the sidebar and is bound once, at load, rather
    than re-bound every time the body is rewritten — the body no longer contains
