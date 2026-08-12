@@ -7,6 +7,38 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.1.3] — 2026-08-12
+
+### Fixed
+
+- **The model's reading stayed behind when the picture moved.** `moveOverlay()` moved the
+  photograph's image source and nothing else, while the model's result is drawn as its
+  own source pinned to the rectangle the picture occupied *when the model ran*. So
+  "Find buildings in it" followed by Fit to view or Snap left the photograph in its new
+  place and its annotation in the old one — two rectangles on screen for one file. Every
+  layer that draws the picture now moves in one place.
+- **Fit to view stretched the picture to the shape of the window.** It assigned the map's
+  bounds straight to the overlay, ignoring the image's own aspect. Fit now means "as
+  large as it goes inside the view, still shaped like itself" — and the degrees-per-degree
+  ratio is multiplied by cos(lat), not divided by it, which is 2% at 8°S and a four-fold
+  stretch at 60°N.
+- **The focus ring on every "?" was a rounded square bigger than the mark.** It was drawn
+  on the 44 px hit area, inset 12 px, landing at about 20 px — a box in a different shape
+  from the 15 px circle, appearing to grow out of nothing when the control was used. The
+  ring is now a circle on the circle the user can see.
+
+### Changed
+
+- **The "?" marks read as buttons**: a faint fill inside the ring, a stronger hover, and a
+  more legible glyph. They were a punctuation character in a heading.
+- **Three sections that had no "?" now have one** — the imagery slider (release date vs
+  capture date, and why the outlines do not move with it), the image workspace (what
+  ground resolution means against 0.31–0.5 m satellite imagery), and the vector workspace
+  (centroid-inside-polygon matching, and why a bounding-box test would be wrong). Eleven
+  triggers, all 44×44, each opening exactly one paragraph.
+
+---
+
 ## [1.1.2] — 2026-08-12
 
 ### Changed
@@ -143,6 +175,7 @@ First public release.
 - English and romanised labels for Greek, Cyrillic, Arabic, Persian, Hebrew, Thai and
   Devanagari.
 
+[1.1.3]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.1.3
 [1.1.2]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.1.2
 [1.1.1]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.1.1
 [1.1.0]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.1.0

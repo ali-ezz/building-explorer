@@ -214,14 +214,28 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
    control is defined rather than discovered again later. */
 .why-t{all:unset;display:inline-block;cursor:pointer;position:relative;flex:none;
   box-sizing:border-box;width:44px;height:44px;margin:-14px -14px -14px -8px;
-  color:var(--faint);font:9px/44px ui-sans-serif,system-ui;text-align:center;
+  color:var(--dim);font:600 10px/44px ui-sans-serif,system-ui;text-align:center;
   transition:color .12s}
+/* The mark now carries a faint fill as well as a ring, so it reads as something
+   you press rather than a punctuation character someone left in the heading. */
 .why-t::before{content:"";position:absolute;left:50%;top:50%;
-  width:15px;height:15px;transform:translate(-50%,-50%);
-  border:1px solid var(--line);border-radius:50%;transition:border-color .12s}
+  width:17px;height:17px;transform:translate(-50%,-50%);
+  border:1px solid var(--line);border-radius:50%;
+  background:color-mix(in srgb,var(--ink) 6%,transparent);
+  transition:border-color .12s,background .12s,box-shadow .12s}
 .why-t:hover,.why-t[aria-expanded="true"]{color:var(--accent)}
-.why-t:hover::before,.why-t[aria-expanded="true"]::before{border-color:var(--accent)}
-.why-t:focus-visible{outline:2px solid var(--accent);outline-offset:-12px;border-radius:50%}
+.why-t:hover::before,.why-t[aria-expanded="true"]::before{
+  border-color:var(--accent);background:color-mix(in srgb,var(--accent) 15%,transparent)}
+/* ⚠️ THE FOCUS RING WAS A ROUNDED SQUARE, AND IT WAS BIGGER THAN THE MARK.
+   It was drawn on the BUTTON — 44 px, the hit area — inset 12 px, which lands at
+   about 20 px across, so pressing the control produced a box round the outside of
+   the 15 px circle, in a different shape from it, that appeared to grow out of
+   nowhere. The hit area is deliberately much larger than the mark; it is not a
+   thing to draw a border around. The ring goes on the circle the user can
+   actually see, and is a circle. */
+.why-t:focus-visible{outline:none}
+.why-t:focus-visible::before{border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 30%,transparent)}
 .why-b{margin:5px 0 0;font-size:10.5px;line-height:1.55;color:var(--faint);
   padding-left:9px;border-left:1px solid var(--line-soft)}
 .why-b[hidden]{display:none}
@@ -399,7 +413,14 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
          them. A mode swaps the whole column and puts it back on removal, so
          there is exactly one set of controls for the thing you are doing. -->
     <div class="lyrs" data-panel="image" hidden>
-      <div class="hrow"><h2 id="im-title">Your image</h2></div>
+      <div class="hrow"><h2 id="im-title">Your image</h2>
+        <button class="why-t" data-why="im-whatwhy" aria-expanded="false" aria-label="Why">?</button></div>
+      <p class="why-b" id="im-whatwhy" hidden>Read in this browser and never uploaded —
+        there is no server in this application to send it to. <b>Ground resolution</b> is the
+        figure that matters: everything this app streams is 0.31–0.5 m per pixel, and at that
+        scale the wall between two touching houses is about one pixel wide. A drone frame at
+        5 cm is ten times finer, which is the whole reason for opening one here.
+        <b>Position</b> says whether the placement was read from the file or made by you.</p>
       <div id="im-meta"></div>
       <div class="row" style="margin-top:8px"><button id="im-remove">Remove image</button></div>
 
@@ -455,7 +476,14 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
     </div>
 
     <div class="lyrs" data-panel="vectors" hidden>
-      <div class="hrow"><h2 id="vec-title">Your polygons</h2></div>
+      <div class="hrow"><h2 id="vec-title">Your polygons</h2>
+        <button class="why-t" data-why="vec-why" aria-expanded="false" aria-label="Why">?</button></div>
+      <p class="why-b" id="vec-why" hidden>Your survey, scored against the published data
+        building by building: which of yours sit on one of theirs, which you have and they do
+        not, which they have and you do not. Matched by <b>centroid inside polygon</b>, not by
+        overlapping bounding boxes — in dense fabric two neighbours share a wall, so their
+        boxes overlap heavily while neither centre is inside the other, and a box test scores
+        neighbours as matches. Only polygons can be matched; points are counted and ignored.</p>
       <div id="vec-meta"></div>
       <div class="row" style="margin-top:8px"><button id="vec-remove">Remove them</button></div>
     </div>
@@ -468,7 +496,15 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <label for="yr">Imagery</label>
         <input type="range" id="yr" min="0" max="12" value="12" step="1">
         <output id="yrv">2026</output>
+        <button class="why-t" data-why="yrwhy" aria-expanded="false" aria-label="Why">?</button>
       </div>
+      <p class="why-b" id="yrwhy" hidden>Esri's Wayback archive, one release per year.
+        The number on the right is the <em>release</em> — a publication date — and the note
+        under it is when the shutter actually opened, which is usually earlier and sometimes
+        by years. Where two releases turn out to be the same photograph over this ground, it
+        says so rather than leaving you to wonder why nothing changed. Building outlines do
+        not move with this slider: they are one snapshot, sourced about 2023, so on old
+        imagery you are looking at today's buildings over yesterday's ground.</p>
       <div class="capnote" id="capnote"></div>
       <!-- ⚠️ THIS EXPLANATION WAS UNREACHABLE. #sharphint ships `hidden`, and the only
            code that ever touched it set hidden = true again on each run — there was no
@@ -4541,11 +4577,28 @@ function placeOverlay(cv, bb, name, proj, geo){
   const b = document.getElementById('upload');
   if(b){ b.classList.add('on'); b.textContent = 'Remove image'; }
 }
+/* ⚠️ EVERYTHING THAT BELONGS TO THE PICTURE MOVES WITH THE PICTURE.
+   This moved `upsrc` and nothing else. The model's reading is drawn as its own
+   image source, `mdlsrc`, pinned to the rectangle the picture occupied WHEN THE
+   MODEL RAN — so running "Find buildings in it" and then pressing Fit to view or
+   Snap left the photograph in its new place and the annotation in the old one.
+   Two rectangles on screen for one file: the picture, and a coloured tracing of
+   it sitting somewhere else, which is the doubling that was reported.
+
+   One rectangle, one setCoordinates for every layer that draws it. A layer added
+   later must be moved here too, which is why they are in one function rather
+   than at each call site. */
 function moveOverlay(bb){
   if(!overlay) return;
   overlay.bb = bb;
+  const co = [[bb.w,bb.n],[bb.e,bb.n],[bb.e,bb.s],[bb.w,bb.s]];
   const src = map.getSource('upsrc');
-  if(src) src.setCoordinates([[bb.w,bb.n],[bb.e,bb.n],[bb.e,bb.s],[bb.w,bb.s]]);
+  if(src) src.setCoordinates(co);
+  // the model read THESE pixels, so its result occupies exactly the same ground
+  const mdl = map.getSource('mdlsrc');
+  if(mdl) mdl.setCoordinates(co);
+  // the status line quotes the extent and the ground resolution
+  refresh();
 }
 
 /* ---- SNAP A PLACEMENT TO THE BASEMAP ----
@@ -4900,9 +4953,26 @@ function overlayPanel(extra){
   on('mdl-run','click', runModelOnOverlay);
   on('mdl-export','click', ()=>exportModelResult(true));
   on('up-snap','click', ()=>snapOverlay());
+  /* ⚠️ FIT USED TO STRETCH THE PICTURE TO THE VIEWPORT. It assigned the map's
+     bounds straight to the overlay, so a 16:9 photograph in a tall window was
+     squashed and a square one in a wide window was pulled out sideways — and
+     every measurement taken from it afterwards, including the model's, was taken
+     from a distorted image. Fit means "as large as it goes inside the view,
+     still shaped like itself". */
   on('up-fit','click', ()=>{ if(!overlay) return;
-    const b=map.getBounds();
-    moveOverlay({w:b.getWest(), e:b.getEast(), s:b.getSouth(), n:b.getNorth()});
+    const b = map.getBounds(), c = map.getCenter();
+    const k = Math.cos(c.lat*Math.PI/180);
+    const viewW = b.getEast()-b.getWest(), viewH = b.getNorth()-b.getSouth();
+    /* degrees of latitude per degree of longitude for a picture that is to keep
+       its shape: a degree of longitude is only cos(lat) as wide on the ground as a
+       degree of latitude is tall, so the ratio is MULTIPLIED by cos(lat), not
+       divided by it. Measured with it inverted: 0.825 against the image's own
+       0.842 here at 8°S — 2%, invisible — and a four-fold stretch at 60°, which
+       is not. loadPlainImage() has always had this right; fit did not. */
+    const aspect = (overlay.H/overlay.W) * k;
+    let w = viewW*0.9, h = w*aspect;
+    if(h > viewH*0.9){ h = viewH*0.9; w = h/aspect; }
+    moveOverlay({w:c.lng-w/2, e:c.lng+w/2, s:c.lat-h/2, n:c.lat+h/2});
     const el=document.getElementById('up-snapnote'); if(el) el.textContent='';
   });
 })();
