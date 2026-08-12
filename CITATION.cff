@@ -5,8 +5,14 @@ abstract: >-
   A single-file web application that streams building footprints, heights and
   historical satellite imagery for anywhere on Earth. Each building can be queried for
   its measured footprint geometry, its exact count of physically touching neighbours,
-  and estimated height, storeys and population share. Built as the delivered product
-  of a study on segmenting individual buildings in dense informal settlements.
+  and estimated height, storeys and population share. A selected area additionally
+  yields density, footprint distribution, coverage measured from the union of
+  rasterised footprints, and block complexity — the street-access metric for informal
+  settlement — exported as a georeferenced two-colour instance mask with its statistics
+  and provenance. Users may load their own imagery or polygons and have them scored
+  against the published data. All computation is client-side; no data is stored or
+  uploaded. Built as the delivered product of a study on segmenting individual
+  buildings in dense informal settlements.
 type: software
 authors:
   - family-names: Ezz

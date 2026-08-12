@@ -37,6 +37,18 @@ Licence: **ODbL**. Data © OpenStreetMap contributors.
 Subject to the Nominatim usage policy.
 https://nominatim.org
 
+### Building segmentation model — geobase
+Licence: **MIT**
+`geobase/building-footprint-segmentation`, a U-Net published for building extraction
+and distributed as a quantised ONNX file with the MIT-licensed **geoai.js** project.
+Downloaded from Hugging Face and run **in the browser** when you ask the app to read
+an uploaded picture. No weights are trained, stored or redistributed here, and no
+image is uploaded anywhere — the model comes to the picture.
+https://huggingface.co/geobase/building-footprint-segmentation
+
+> Its quality on dense informal fabric is **unmeasured**, which is why the app always
+> scores its output against the published footprints and never shows it alone.
+
 ## Software
 
 | Library | Licence |
@@ -44,7 +56,12 @@ https://nominatim.org
 | MapLibre GL JS | BSD-3-Clause |
 | PMTiles | BSD-3-Clause |
 | geotiff.js | MIT |
+| ONNX Runtime Web | MIT |
 | Noto Sans (glyphs) | SIL Open Font License 1.1 |
+
+geotiff.js and ONNX Runtime Web are fetched on demand — the first when you click a
+building or open a GeoTIFF, the second only if you run the model — so neither is
+loaded on a plain page view.
 
 ## What this repository contains
 

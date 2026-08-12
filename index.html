@@ -187,23 +187,9 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
 .why-b[hidden]{display:none}
 .hrow{display:flex;align-items:center}
 
-/* what a file brought with it, and how to let go of it */
-#loaded{margin-top:9px}
-/* the section label lives outside .lyrs, so it needs the same rule stated here
-   rather than inheriting a browser default h2 at 1.5em */
-#loaded h2{margin:0 0 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
-  color:var(--faint);font-weight:700}
-#loaded[hidden]{display:none}
-.lc{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:11.5px}
-.lc-k{font:9px/1 ui-monospace,monospace;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--faint);border:1px solid var(--line);border-radius:3px;padding:3px 5px;flex:none}
-.lc-n{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}
-.lc-x{all:unset;display:inline-block;box-sizing:border-box;cursor:pointer;flex:none;
-  width:44px;height:44px;margin:-14px -12px -14px 0;position:relative;
-  color:var(--faint);font:15px/44px ui-sans-serif,system-ui;text-align:center;
-  transition:color .12s}
-.lc-x:hover{color:#e06a5a}
-.lc-x:focus-visible{outline:2px solid var(--accent);outline-offset:-14px;border-radius:50%}
+/* The "Loaded" chip row (#loaded, .lc*) was styled here long after the markup for
+   it had gone: applyPanelMode() swaps the whole column instead, so what is loaded
+   is stated by the panel you are in rather than by a row added to it. */
 
 /* ---- layer stack ---- */
 .lyrs{padding:11px 18px;border-bottom:1px solid var(--line)}
@@ -239,12 +225,10 @@ button.on{background:var(--accent);border-color:var(--accent);color:#05121c;font
 .lyr[aria-pressed="true"] .sw{background:var(--accent);border-color:var(--accent)}
 .lyr[aria-pressed="true"] .sw::after{content:"";position:absolute;left:3.5px;top:1px;
   width:4px;height:7px;border:solid #05121c;border-width:0 2px 2px 0;transform:rotate(43deg)}
-.lyr .src{margin-left:auto;font:9.5px/1 ui-monospace,monospace;color:var(--faint)}
-.lyr.ctx{position:relative}
-.lyr .sw.rad{border-radius:50%;position:relative}
-.lyr[aria-checked="true"] .sw{background:var(--accent);border-color:var(--accent)}
-.lyr[aria-checked="true"] .sw.rad::after{content:"";position:absolute;left:3px;top:3px;
-  width:5px;height:5px;border-radius:50%;background:#05121c}
+/* .lyr is now used by exactly one thing — the Sources picker — so the rules that
+   served the removed layer list (.src, .ctx, the radio variant .sw.rad and its
+   aria-checked states) went with it. What is left is what that picker renders:
+   a checkbox swatch, a colour dot and a label. */
 #srcpick{margin-top:4px;padding-left:2px}
 /* THE PANEL HAS EXACTLY ONE SCROLLBAR.
    It used to have three: the controls block scrolled inside its own 44vh cap,
@@ -384,14 +368,37 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <p class="segwhy" id="up-snapnote"></p>
       </div>
 
+      <!-- ================= ONE SECTION FOR THE PUBLISHED DATA =================
+           There used to be a second, top-level "Export for this ground" heading
+           down at the bottom of this panel. That is a MAP control — it writes the
+           published footprints for a stretch of ground — and having it sit as its
+           own section inside the image workspace mirrored the map panel's Export
+           and read as though the image had two unrelated exports, one of which
+           belonged to the panel underneath.
+
+           Showing outlines, measuring the ground and downloading it are three
+           things you do to ONE subject: the published data underneath your
+           picture. They are one section, in that order. What belongs to the
+           image itself — placement — and what belongs to the model — reading the
+           pixels — stay in their own sections, so every heading in this panel now
+           names a different subject rather than a different verb. -->
       <div id="im-cmp">
         <div class="hrow" style="margin-top:15px;padding-top:13px;border-top:1px solid var(--line-soft)">
-          <h2>Published data on this ground</h2></div>
+          <h2>Published data on this ground</h2>
+          <button class="why-t" data-why="im-exwhy" aria-expanded="false" aria-label="Why">?</button></div>
+        <p class="why-b" id="im-exwhy" hidden>The footprints Google, Microsoft and Overture
+          publish for exactly the ground your image covers. Show them over your picture to see
+          where they agree, measure them for the full area report, or download them rendered at
+          your image's own pixel grid and projection — so the mask drops onto your file one
+          pixel to one pixel. Two-colour mask with touching buildings separated, colour instance
+          mask, GeoJSON, statistics CSV and world files.</p>
         <div class="seg" id="im-outlines" role="radiogroup" aria-label="Show published outlines over your image">
           <button role="radio" aria-checked="true"  data-scope="all">Show outlines</button>
           <button role="radio" aria-checked="false" data-scope="off">Hide</button>
         </div>
         <div class="row" style="margin-top:8px"><button id="up-report">Measure this footprint</button></div>
+        <div class="row" style="margin-top:8px"><button id="up-all">Download all</button>
+                         <button id="up-mask">Mask only</button></div>
       </div>
 
       <div id="im-model">
@@ -409,17 +416,6 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
         <p class="segwhy" id="mdl-note"></p>
       </div>
 
-      <div id="im-export">
-        <div class="hrow" style="margin-top:15px;padding-top:13px;border-top:1px solid var(--line-soft)">
-          <h2>Export for this ground</h2>
-          <button class="why-t" data-why="im-exwhy" aria-expanded="false" aria-label="Why">?</button></div>
-        <p class="why-b" id="im-exwhy" hidden>The published footprints for exactly the ground
-          your image covers, rendered at your image's own pixel grid and projection — so the
-          mask drops onto your file one pixel to one pixel. Two-colour mask with touching
-          buildings separated, colour instance mask, GeoJSON, statistics CSV and world files.</p>
-        <div class="row"><button id="up-all">Download all</button>
-                         <button id="up-mask">Mask only</button></div>
-      </div>
     </div>
 
     <div class="lyrs" data-panel="vectors" hidden>
@@ -1123,7 +1119,7 @@ on('conf','input', e => {
 });
 on('areaclear','click',()=>clearSelection());
 function clearSelection(){
-  boxA = boxB = null; lastBox = null;
+  boxA = boxB = null; lastBox = null; boxFromOverlay = false;
   lastFeats = null; lastStats = null; lastRaster = null; lastBC = null;
   const bs = map.getSource('boxsrc'); if(bs) bs.setData({type:'FeatureCollection',features:[]});
   applyDrawScope();
@@ -1138,52 +1134,20 @@ document.addEventListener('keydown', e => {
   if(drawing) setDrawMode(false); else if(lastBox) clearSelection();
 });
 
-/* ---------- layer stack ----------
-   ONE config drives the toggles, the visibility calls and the credit line.
-   applyTheme once iterated a hard-coded layer id that had stopped existing, so
-   the light theme silently left labels white on white; anything that can drift
-   from the style is now generated FROM the style's own layer ids.
+/* ---------- there is no layer list any more ----------
+   A LAYERS config once drove a set of toggles for road names and place names,
+   and before that a CONTEXT radio group for land cover, water, natural land,
+   land use and places. The context group went first, on measurement — see the
+   note above PMTOVT: over dense Imbaba those five layers knew about eight
+   features between them. Then the road/place toggles went too, and what was
+   left was a config object, a UI builder and a visibility setter all pointing
+   at a #lyrlist element that no longer existed in the markup, so buildLayerUI()
+   returned immediately and the whole apparatus did nothing.
 
-   There used to be a CONTEXT radio group here as well - land cover, water,
-   natural land, land use, places - each a semi-transparent fill over the same
-   ground. Stacked, they composited into brown sludge that hid the photograph
-   and made every click return a pile of features. Then measurement settled it:
-   over dense Imbaba those five layers between them knew about eight features.
-   The whole group is gone, along with the two archives it streamed from. */
-const LAYERS = [
-  {key:'roads',     label:'Road names',  src:'Overture',
-   ids:['road-major','road-minor'],      on:true,  dot:'#eef5fb'},
-  {key:'admin',     label:'Place names', src:'Overture',
-   ids:['adm-country','adm-region'],     on:true,  dot:'#c8d4e2'},
-];
-function setLayer(cfg, on){
-  cfg.on = on;
-  for(const id of cfg.ids)
-    if(map.getLayer(id)) map.setLayoutProperty(id,'visibility', on?'visible':'none');
-  const el = document.querySelector(`.lyr[data-key="${cfg.key}"]`);
-  if(el) el.setAttribute('aria-pressed', on ? 'true' : 'false');
-}
-function ctxIsBuildings(){ return true; }   // buildings are the only class now
-function buildLayerUI(){
-  const host = document.getElementById('lyrlist');
-  if(!host) return;   // the Labels control was removed; road and place names stay on
-  host.innerHTML = LAYERS.map(c =>
-    `<div class="lyr" role="button" tabindex="0" data-key="${c.key}"
-          aria-pressed="${c.on}" aria-label="${c.label} layer">
-       <i class="sw"></i><i class="dot" style="background:${c.dot}"></i>
-       <span>${c.label}</span><span class="src">${c.src}</span>
-     </div>`).join('');
-  for(const c of LAYERS){
-    const el = host.querySelector(`.lyr[data-key="${c.key}"]`);
-    const hit = () => setLayer(c, !c.on);
-    el.addEventListener('click', hit);
-    // keyboard parity: a div with role=button must answer Enter and Space
-    el.addEventListener('keydown', e => {
-      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); hit(); }
-    });
-  }
-}
-
+   Road and place names are simply on. They are two label layers, they cost
+   nothing to leave visible, and a toggle nobody could reach was not a feature.
+   applyTheme() still recolours them, driven off LBL_IDS — the list the style
+   itself generates, which is what stopped it drifting in the first place. */
 
 /* ================= ONE WORKSPACE AT A TIME =================
    Panels are tagged with the mode they belong to and the whole column is
@@ -1228,7 +1192,11 @@ function fillImagePanel(){
     ${fmtRow('Position', overlay.geo
         ? (overlay.exif ? 'from its EXIF GPS' : 'from its own georeferencing')
         : 'placed by hand')}
-    ${fmtRow('Grid', overlay.proj === 'deg' ? 'EPSG:4326 · degrees' : 'EPSG:3857 · Web Mercator')}
+    ${fmtRow('Grid', overlay.crs ? overlay.crs.label
+        : overlay.proj === 'deg' ? 'EPSG:4326 · degrees' : 'EPSG:3857 · Web Mercator',
+      overlay.crs && overlay.crs.reprojected
+        ? 'read from the file’s own header and reprojected to WGS84'
+        : '')}
   </table>`;
   // a georeferenced file does not need fitting; a photograph does
   const fit = document.getElementById('up-fit');
@@ -1237,10 +1205,22 @@ function fillImagePanel(){
   if(seg) for(const o of seg.querySelectorAll('button'))
     o.setAttribute('aria-checked', String(o.dataset.scope === drawScope));
 }
+/* A points CSV is not "3 of your polygons". The title used to call every feature
+   a polygon whatever it was, and then the table underneath said "Your polygons 0
+   · Points ignored 3" — the heading contradicting the measurement directly below
+   it. It counts what is actually there. */
 function fillVectorPanel(){
   if(!userVectors) return;
   const t = document.getElementById('vec-title');
-  if(t) t.textContent = `${userVectors.features.length.toLocaleString()} of your polygons`;
+  if(!t) return;
+  const fs = userVectors.features;
+  const polys = fs.filter(f => f.geometry &&
+    (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')).length;
+  const pts = fs.length - polys;
+  const bits = [];
+  if(polys) bits.push(`${polys.toLocaleString()} polygon${polys===1?'':'s'}`);
+  if(pts)   bits.push(`${pts.toLocaleString()} point${pts===1?'':'s'}`);
+  t.textContent = bits.length ? bits.join(' · ') + ' of yours' : 'Your file';
 }
 
 /* Every "?" shows the paragraph belonging to its section and nothing else, so
@@ -1369,6 +1349,24 @@ async function warmCaptures(){
 
    The panel says all of this, per area, because a user is entitled to know the
    quality of the picture their measurements rest on. */
+/* ⚠️ ESRI WRITES THE WORD "Null" AND IT IS A STRING, SO IT IS TRUTHY.
+   `a.SRC_DATE2 || null` keeps "Null" exactly as it keeps "4/30/2025", so over
+   any ground with no dated capture the panel printed it. MEASURED at 20°N 30°W,
+   mid-Atlantic, where the archive falls back to TerraColor at 15 m:
+
+     status line   "0 buildings in view · imagery Null"
+     capnote       "taken Null · 15.00 m/px · TerraColor NextGen"
+
+   Which is the defect this app fixes everywhere else — an absent ANSWER and a
+   real one rendering identically — arriving as a four-letter word from someone
+   else's server. Normalised once, on the way in, so every consumer of these
+   records gets null and takes its own already-written fallback. */
+const ESRI_NULLS = ['', 'null', 'nan', 'n/a', 'na', 'unknown', '<null>', 'none'];
+const esriVal = v => {
+  if(v == null) return null;
+  const s = String(v).trim();
+  return ESRI_NULLS.indexOf(s.toLowerCase()) >= 0 ? null : s;
+};
 const imetaCache = new Map();
 async function imageryMeta(lng, lat, year){
   const svc = IMETA && IMETA[year];
@@ -1396,9 +1394,9 @@ async function imageryMeta(lng, lat, year){
     }
     if(best){
       const a = best.a;
-      out = {sensor:a.SRC_DESC || null, res:best.res,
-             captured:a.SRC_DATE2 || null, accuracy:parseFloat(a.SRC_ACC),
-             product:a.NICE_NAME || null, provider:a.NICE_DESC || null};
+      out = {sensor:esriVal(a.SRC_DESC), res:best.res,
+             captured:esriVal(a.SRC_DATE2), accuracy:parseFloat(a.SRC_ACC),
+             product:esriVal(a.NICE_NAME), provider:esriVal(a.NICE_DESC)};
     }
   }catch(e){ out = null; }
   imetaCache.set(key, out);
@@ -1468,7 +1466,8 @@ async function metaFor(svc, lng, lat){
       const a = x.attributes||{}; const rr = parseFloat(a.SRC_RES);
       if(!isFinite(rr)) continue;
       if(!best || rr < best.res) best = {res:rr, acc:parseFloat(a.SRC_ACC),
-        captured:a.SRC_DATE2, sensor:a.SRC_DESC, product:a.NICE_NAME};
+        captured:esriVal(a.SRC_DATE2), sensor:esriVal(a.SRC_DESC),
+        product:esriVal(a.NICE_NAME)};
     }
     return best;
   }catch(e){ return null; }
@@ -1648,25 +1647,11 @@ function setSheet(i, animate=true){
    building rather than the pair. 392 of 395 overlapping pairs are
    google+overture; 2 are google+google. The original note stands. */
 const SRC_OF = {'bld-fill':['bld', BLD_LAYER], 'ovt-fill':['ovt','building']};
-const CELL = 0.0004;      // ~40 m spatial hash
-/* Overture geometry that came from a product VIDA already carries in full. */
-const VIDA_DATASETS = ['Google Open Buildings', 'Microsoft ML Buildings'];
-/* A follower building is hidden only when this share of it is ground the leader
-   has already described. Swept on the audit; see DATA_QUALITY_PLAN.md. */
-let DUP_COVERED = 0.70;
 
 // the idle handler queries once and both consumers read the same array
 let lastQuery = null;
 function queryBuildings(){
   return map.queryRenderedFeatures({layers:BLD_LAYERS.filter(l=>map.getLayer(l))});
-}
-function geomSourceOf(f){
-  const p = f.properties || {};
-  if(p['@geometry_source']) return p['@geometry_source'];
-  // fall back to the serialised sources array if the shortcut is absent
-  try{ const a = JSON.parse(p.sources || '[]'); if(a.length && a[0].dataset) return a[0].dataset; }
-  catch(e){}
-  return null;
 }
 /* Ray casting, even-odd, across every ring of the polygon so a courtyard
    counts as outside. Used to ask one precise question: does a VIDA building
@@ -1689,53 +1674,6 @@ function pointInFeature(pt, f){
   }
   return false;
 }
-/* ---- scanline fill, no Canvas2D, no antialiasing ----
-   Used to ask "how much of this building is ground the other product has
-   already described". Every pixel centre is inside the polygon or it is not,
-   so the count is exact. Even-odd across all rings, so a courtyard is a hole. */
-function scanFill(f, W, H, px, py, onPixel){
-  const g = f.geometry; if(!g) return 0;
-  const polys = g.type === 'Polygon' ? [g.coordinates]
-              : g.type === 'MultiPolygon' ? g.coordinates : null;
-  if(!polys) return 0;
-  let n = 0;
-  for(const rings of polys){
-    const ex = []; let ymin = Infinity, ymax = -Infinity;
-    for(const ring of rings){
-      const L = ring.length;
-      for(let i=0;i<L;i++){
-        const a = ring[i], b = ring[(i+1)%L];
-        const ay = py(a[1]), by = py(b[1]);
-        if(ay === by) continue;
-        ex.push(px(a[0]), ay, px(b[0]), by);
-        if(ay<ymin) ymin=ay; if(ay>ymax) ymax=ay;
-        if(by<ymin) ymin=by; if(by>ymax) ymax=by;
-      }
-    }
-    if(!ex.length) continue;
-    let y0 = Math.ceil(ymin-0.5), y1 = Math.floor(ymax-0.5);
-    if(y0<0) y0=0; if(y1>H-1) y1=H-1;
-    const xs = [];
-    for(let y=y0; y<=y1; y++){
-      const sy = y+0.5; xs.length = 0;
-      for(let e=0;e<ex.length;e+=4){
-        const ay=ex[e+1], by=ex[e+3];
-        if((ay<=sy && by>sy) || (by<=sy && ay>sy))
-          xs.push(ex[e] + (sy-ay)/(by-ay)*(ex[e+2]-ex[e]));
-      }
-      if(xs.length<2) continue;
-      xs.sort((a,b)=>a-b);
-      const row = y*W;
-      for(let i=0;i+1<xs.length;i+=2){
-        let xa=Math.ceil(xs[i]-0.5), xb=Math.floor(xs[i+1]-0.5);
-        if(xa<0) xa=0; if(xb>W-1) xb=W-1;
-        for(let x=xa;x<=xb;x++){ onPixel(row+x); n++; }
-      }
-    }
-  }
-  return n;
-}
-
 /* ================= WHY ONE PRODUCT, NOT TWO RECONCILED =================
    Four rules were built and measured against the same two questions - how much
    real roof did you delete, and how much doubling is left. Every one of them
@@ -1812,17 +1750,6 @@ function dedupe(){
   if(drawScope === 'sel' && lastBox) markInSelection();
 }
 const PRODUCT_NAME = {bld:'Google + Microsoft', ovt:'Overture'};
-/* How much of what Overture contributes here is genuinely its own, for the
-   panel to say out loud rather than silently hiding two thirds of a source. */
-function overtureSplit(){
-  const f = (lastQuery || queryBuildings()).filter(x => x.source === 'ovt');
-  let reserved = 0, own = 0;
-  for(const x of f){
-    const ds = geomSourceOf(x);
-    if(ds && VIDA_DATASETS.indexOf(ds) >= 0) reserved++; else own++;
-  }
-  return {reserved, own, total:f.length};
-}
 // a hidden duplicate is still returned by queryRenderedFeatures, so the count,
 // the export, the click target and the neighbour test all have to skip it too
 const notDup = f => !(f.id != null && dupIds[f.source] && dupIds[f.source].has(f.id));
@@ -2001,10 +1928,9 @@ map.on('idle', ()=>{
    SHARE of the local built volume (area x floors). Supply a known total for the view
    - a census figure, a district statistic - and it is distributed by that share.
    This is an allocation, never a measured headcount. */
-let areaPop = null;
 // The population input was removed from the UI; population is reported as a share of
-// local built volume instead. `on()` is used everywhere below so a missing element is
-// a no-op rather than a script-killing TypeError.
+// local built volume instead, and never as a headcount. `on()` is used everywhere
+// below so a missing element is a no-op rather than a script-killing TypeError.
 function on(id, ev, fn){ const el = document.getElementById(id); if(el) el.addEventListener(ev, fn); }
 async function popShare(f, all){
   const gs = geomStats(f); if(!gs) return null;
@@ -2072,6 +1998,7 @@ function setDrawMode(on){
     const bb = boxBounds();
     // a click without a drag is not a selection - require a real rectangle
     if(!bb || Math.abs(bb.e-bb.w) < 1e-6 || Math.abs(bb.n-bb.s) < 1e-6){ return; }
+    boxFromOverlay = false;                // the user drew this one
     lastBox = bb; setDrawMode(false); drawBox2(bb); applyDrawScope(); areaReport(bb);
   };
   map.on('load', ()=>{
@@ -3094,6 +3021,17 @@ function statsCSV(bb, st, W, H, gsd, nInst){
     ['raster_width',W,'px','measured'], ['raster_height',H,'px','measured'],
     ['raster_gsd',gsd,'m_per_px','measured'],
     ['raster_crs', (lastRaster && lastRaster.proj === 'deg') ? 'EPSG:4326' : 'EPSG:3857','','provenance'],
+    /* WHICH OF THE TWO THINGS THE MASK HOLDS. Every row above is measured from the
+       published footprints; when the mask is a model's reading of an uploaded
+       picture the pixels are NOT the same dataset as the statistics, and an
+       archive that does not say so invites the two to be quoted as one. */
+    ['raster_content', st.modelCover != null
+      ? 'model reading of the uploaded image'
+      : 'published footprints', '', 'provenance'],
+    ...(st.modelCover != null ? [
+      ['model_buildings', st.modelCount, 'count', 'measured'],
+      ['model_coverage_union', st.modelCover, 'fraction', 'measured'],
+    ] : []),
     ['min_confidence_filter',minConf,'0-1','provenance'],
     ['building_sources', srcCredit(), '', 'provenance'],
     ['building_vintage', BLD_VINTAGE, 'year', 'provenance'],
@@ -3129,6 +3067,14 @@ function manifest(bb, st, W, H, gsd, nInst, stamp, N){
 `              W ${M.x0.toFixed(2)}  S ${M.y0.toFixed(2)}  E ${M.x1.toFixed(2)}  N ${M.y1.toFixed(2)}   (EPSG:3857, metres)`,
 `area          ${st.km2.toFixed(4)} km2`,
 `raster        ${W} x ${H} px at ${gsd.toFixed(3)} m/px, ${CRS}`,
+/* When the pixels came from the model rather than from the published footprints,
+   that is the first thing this file has to say — the statistics beside it are
+   still measured from the published data, and the two must not be quoted as one. */
+st.modelCover != null ? `contents      A MODEL'S READING OF YOUR UPLOADED IMAGE, not the published` : null,
+st.modelCover != null ? `              footprints. ${st.modelCount} buildings were read from the picture.` : null,
+st.modelCover != null ? `              The statistics and GeoJSON beside it are measured from the` : null,
+st.modelCover != null ? `              PUBLISHED data for the same ground, so they describe a different` : null,
+st.modelCover != null ? `              dataset from the mask. Compare them; do not add them up.` : null,
 ``,
 `FILES IN THIS ARCHIVE`,
 `  ${N.mask}`,
@@ -3211,27 +3157,6 @@ BC && !BC.noRoads ? `  k reads too high and the fronting share too low.` : null,
 ``].filter(x => x !== null).join('\n');
 }
 
-/* ---------- export what is on screen, anywhere in the world ---------- */
-function exportVisible(feats, filename){
-  const out = feats.map(f=>{
-    const g = geomStatsWhole(f, feats), c = centroid(f), p = f.properties;
-    let ds = p['@geometry_source'] || 'unknown';
-    try{ const s0=JSON.parse(p.sources||'[]'); if(s0.length) ds=s0[0].dataset; }catch(_){}
-    return {type:'Feature', geometry:f.geometry, properties:{
-      id:p.id||null, source:ds,
-      area_m2: g? +g.area.toFixed(1):null,
-      perimeter_m: g? +g.perim.toFixed(1):null,
-      compactness: g? +g.compact.toFixed(3):null,
-      tile_pieces: g? g.parts:null,
-      lon: c? +c[0].toFixed(6):null, lat: c? +c[1].toFixed(6):null,
-      _note:'geometry is tile-simplified; height must be read per building in-app'
-    }};
-  });
-  dl(filename || 'buildings_area.geojson',
-     new Blob([JSON.stringify({type:'FeatureCollection',features:out})],
-              {type:'application/geo+json'}));
-}
-
 /* ---------- click a building ---------- */
 /* BUG THIS FIXES: in "In selection" mode you could still click a building that
    was not drawn. The MapLibre docs are explicit - queryRenderedFeatures returns
@@ -3240,7 +3165,7 @@ function exportVisible(feats, filename){
    handler behaves the same way. Invisible things must not be clickable, so the
    same rule that decides what is DRAWN now decides what is HITTABLE. */
 function isHittable(f){
-  if(drawScope === 'off' || !ctxIsBuildings()) return false;
+  if(drawScope === 'off') return false;
   if(f.source === 'bld' && !showVida) return false;
   if(f.source === 'ovt' && !showOvt)  return false;
   if(drawScope === 'sel'){
@@ -3323,7 +3248,17 @@ async function onBuildingClick(e){
     </table>
     <div class="note note-warn"><strong>Every building in the same 76 m cell shows these
     same numbers.</strong> They describe the neighbourhood, not this roof. Use them for the
-    block; do not quote them for a building.</div></div>
+    block; do not quote them for a building.</div>
+    <!-- ⚠️ THE TABLE'S OWN CAVEAT WAS BEING PUSHED TO THE BOTTOM. The change note and
+         the precision note were both inserted at #tbl's afterend, so they wedged
+         themselves between the table and the warning that belongs to it — and because
+         both used the same anchor, the second call landed BEFORE the first, so they
+         came out in reverse order too. The caveat this whole block was retitled for
+         ended up furthest from the numbers it qualifies.
+
+         Appending into a container keeps call order and keeps the caveat where it
+         belongs: immediately under its own table. -->
+    <div id="blocknotes"></div></div>
 
     <div class="grp"><h2>Location &amp; provenance</h2><table>
       <tr><td class="k">Longitude</td><td class="v"><span class="num">${c[0].toFixed(6)}</span></td></tr>
@@ -3381,13 +3316,21 @@ async function onBuildingClick(e){
     if(!ps) return;
     const tbl = document.getElementById('tbl'); if(!tbl) return;
     const pct = (ps.share*100).toFixed(4);
-    tbl.insertAdjacentHTML('beforeend', areaPop
-      ? `<tr><td class="k">People (allocated)</td><td class="v">${Math.round(areaPop*ps.share)}
-         <span class="tag t-est">est</span><span class="why">${pct}% of the ${areaPop.toLocaleString()}
-         you entered, shared by building volume — an allocation, not a headcount</span></td></tr>`
-      : `<tr><td class="k">Share of area population</td><td class="v">${pct}%
-         <span class="tag t-est">est</span><span class="why">by building volume. Enter a population
-         for this area above to turn this into people.</span></td></tr>`);
+    /* ⚠️ THIS ROW TOLD THE USER TO USE A CONTROL THAT DOES NOT EXIST. It read
+       "Enter a population for this area above to turn this into people" — and the
+       population input was removed from the panel long ago, so there was nothing
+       above, nothing below, and no way to do the thing being asked for. The other
+       branch of the same ternary rendered a headcount from `areaPop`, which is
+       permanently null and so could never run at all.
+
+       What is left is the figure the app can actually compute: a share. Turning it
+       into people is arithmetic the user does with a total they trust, and the row
+       now says exactly that instead of pointing at a missing box. */
+    tbl.insertAdjacentHTML('beforeend',
+      `<tr><td class="k">Share of area population</td><td class="v">${pct}%
+       <span class="tag t-est">est</span><span class="why">this building's share of the
+       built volume in view, by area × floors. Multiply it by a population you trust
+       for this area to allocate people — an allocation, never a headcount.</span></td></tr>`);
   })();
   const fl = document.getElementById('flr');
   if(fl){
@@ -3397,27 +3340,18 @@ async function onBuildingClick(e){
          <span class="why">height ÷ 3.0 m per storey — an estimate of an estimate</span>`
       : `<span class="na">not available</span><span class="why">needs a height value</span>`;
   }
-  if(h23&&h20){
+  const notes = document.getElementById('blocknotes');
+  if(notes && h23 && h20){
     const d=Math.abs(h23.height-h20.height);
-    document.getElementById('tbl').insertAdjacentHTML('afterend',
+    notes.insertAdjacentHTML('beforeend',
       `<div class="note note-info"><strong>Change 2020→2023:</strong> ${(h23.height-h20.height>=0?'+':'')}${(h23.height-h20.height).toFixed(1)} m
        ${d<2?' — within noise for this grid':''}</div>`);
   }
-  document.getElementById('tbl').insertAdjacentHTML('afterend',
+  if(notes) notes.insertAdjacentHTML('beforeend',
     `<div class="note note-warn"><strong>Precision.</strong> Outlines are tile-simplified
      and height comes from a ~76 m grid, so both describe this building's block more than
      the building itself. Independent height sources for one test area differed by up to
      4.7 m — about 1.5 storeys.</div>`);
-}
-/* Overture serialises `names`, `sources` and `source_tags` as JSON strings
-   inside a single tile property. The building record reads them through here. */
-function jsonProp(p, k){
-  try { return p[k] ? JSON.parse(p[k]) : null; } catch(e){ return null; }
-}
-function featureName(p){
-  const n = jsonProp(p,'names');
-  if(n){ if(n.common && (n.common.en)) return n.common.en; if(n.primary) return n.primary; }
-  return p['@name'] || null;
 }
 /* ---- CLICKING NOTHING MEANS NOTHING IS SELECTED ----
    The only click handler was bound to the building layers, so a click on empty
@@ -3490,11 +3424,24 @@ async function runSearch(q){
         const h = j[+el.dataset.i];
         const b = h.boundingbox.map(Number);
         const spanKm = (b[1]-b[0])*110.54;
-        // Small places: fly close. Large regions: fit, but never below the zoom
-        // where buildings render.
+        /* Small places: fly close enough to read buildings. Large regions: show
+           the whole thing.
+
+           This used to pass `minZoom:13` here and claim in a comment that a
+           region would never land below the zoom where buildings render.
+           fitBounds has no minZoom option — the accepted ones are padding,
+           maxZoom, offset, linear and duration — so it was silently ignored, and
+           MEASURED, "Egypt" landed at zoom 4.63 and "Bavaria" at 5.99 regardless.
+
+           The option is gone rather than replaced, because the behaviour it was
+           reaching for is the wrong one: clamping a country to zoom 12 does not
+           show you its buildings, it drops you on an arbitrary square kilometre
+           of desert. Fitting the region shows you the thing you searched for, and
+           the status line already says "zoomed out too far for buildings" with a
+           zoom-in control next to it. */
         if(spanKm < 3) map.flyTo({center:[+h.lon,+h.lat], zoom:16, duration:900});
         else map.fitBounds([[b[2],b[0]],[b[3],b[1]]],
-                           {maxZoom:16, minZoom:13, padding:30, duration:900});
+                           {maxZoom:16, padding:30, duration:900});
         sugg.style.display='none';
         placeInput.value = h.display_name.split(',')[0];
         placeInput.blur();
@@ -3667,7 +3614,7 @@ let drawScope = 'all';
 function opacityExpr(id){
   const base = BASE_OP[id];
   const srcOn = id.startsWith('bld') ? showVida : showOvt;
-  if(drawScope === 'off' || !srcOn || !ctxIsBuildings()) return 0;
+  if(drawScope === 'off' || !srcOn) return 0;
   const lit = provOn ? (id.endsWith('fill') ? 0.22 : 0.9) : base;
   if(drawScope !== 'sel') return provOn ? lit : dupCase(base);
   // outside the selection the outline is GONE, not dimmed - a faint outline
@@ -3916,17 +3863,40 @@ function parseKML(text){
   }
   return {type:'FeatureCollection', features:feats};
 }
+/* ⚠️ A QUOTED FIELD MAY CONTAIN THE SEPARATOR, AND FOR WKT IT ALWAYS DOES.
+   This used to split every row on the separator directly. A WKT polygon is
+   "POLYGON((2.348 48.857, 2.349 48.858, ...))" — commas between every vertex,
+   inside quotes — so a real WKT CSV was shredded into fifty columns, the regex
+   never matched, and the file loaded with ZERO features and no error. MEASURED
+   on 249 real OpenStreetMap buildings exported as CSV: 0 parsed.
+
+   This is the standard RFC 4180 rule: a separator inside quotes is data, and ""
+   inside a quoted field is a literal quote. */
+function splitCSVLine(line, sep){
+  const out = []; let cur = '', q = false;
+  for(let i=0;i<line.length;i++){
+    const c = line[i];
+    if(q){
+      if(c === '"'){ if(line[i+1] === '"'){ cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if(c === '"') q = true;
+    else if(c === sep){ out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out.map(v => v.trim());
+}
 function parseCSV(text){
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if(!lines.length) return {type:'FeatureCollection', features:[]};
   const sep = (lines[0].match(/;/g)||[]).length > (lines[0].match(/,/g)||[]).length ? ';' : ',';
-  const head = lines[0].split(sep).map(h => h.trim().toLowerCase().replace(/^"|"$/g,''));
+  const head = splitCSVLine(lines[0], sep).map(h => h.toLowerCase().replace(/^"|"$/g,''));
   const iLat = head.findIndex(h => /^(lat|latitude|y)$/.test(h));
   const iLon = head.findIndex(h => /^(lon|lng|long|longitude|x)$/.test(h));
   const iWkt = head.findIndex(h => /(wkt|geom|geometry)/.test(h));
   const feats = [];
   for(let i=1;i<lines.length;i++){
-    const c = lines[i].split(sep).map(v => v.trim().replace(/^"|"$/g,''));
+    const c = splitCSVLine(lines[i], sep);
     if(iWkt >= 0 && c[iWkt]){
       const m = /POLYGON\s*\(\((.+?)\)\)/i.exec(c[iWkt]);
       if(m){
@@ -3981,6 +3951,20 @@ function compareVectors(fc){
           missingFromPublished, extraInPublished,
           points: fc.features.length - mine.length};
 }
+/* Resolves when the map has stopped moving AND every tile it asked for has
+   arrived — the same pair of facts the status line uses to tell "no buildings
+   here" apart from "not counted yet". Resolves false on timeout so a caller can
+   say the count is provisional rather than present it as a measurement. */
+function whenTilesSettled(timeout = 9000){
+  return new Promise(res => {
+    const t0 = performance.now();
+    (function poll(){
+      if(!awaitingTiles && map.areTilesLoaded()) return res(true);
+      if(performance.now() - t0 > timeout) return res(false);
+      setTimeout(poll, 200);
+    })();
+  });
+}
 function uniqBy(a){ const s=new Set(), o=[];
   for(const f of a){ const k=featKey(f); if(k!=null){ if(s.has(k)) continue; s.add(k);} o.push(f); }
   return o; }
@@ -4010,7 +3994,18 @@ async function loadVectorFile(file, say, kind){
       ${fmtRow('Extent', `${(areaKm2(bb)).toFixed(3)} km²`)}
     </table></div>
     <p class="empty">Comparing with the published data…</p>`));
-  await new Promise(r=>setTimeout(r, 1200));      // let the tiles arrive
+  /* ⚠️ THIS USED TO BE A FIXED 1,200 ms AND A HOPE. compareVectors() counts the
+     published buildings with queryRenderedFeatures, so it can only see tiles that
+     have actually arrived — and fitBounds() has just moved the camera somewhere
+     new. MEASURED on the same 249 real OpenStreetMap buildings loaded twice over
+     the same ground: "Published here 75" on the run where the tiles were still in
+     flight, "499" on the run where they had landed. Same file, same place, two
+     answers, neither labelled — and "they have extra 40" against "268" is not a
+     rounding difference, it is a different conclusion about the data.
+
+     The map knows when it has finished. It is asked, rather than guessed at, and
+     if it never settles the comparison says so instead of quietly undercounting. */
+  const settled = await whenTilesSettled();
   const cmp = compareVectors(fc);
   const host = document.getElementById('body');
   if(!cmp){ host.insertAdjacentHTML('beforeend',
@@ -4035,7 +4030,11 @@ async function loadVectorFile(file, say, kind){
     overlapping boxes.</strong> In dense fabric two neighbours share a wall, so their
     bounding boxes overlap heavily while neither centre is inside the other — a bbox test
     scores neighbours as matches and is why this project's first deduplication attempt
-    deleted 14.87% of real roof.</div></div>`));
+    deleted 14.87% of real roof.</div>
+    ${settled ? '' : `<div class="note note-warn"><strong>The published tiles had not all
+    arrived.</strong> These figures were computed on what had loaded, so "published here"
+    and "they have extra" are lower bounds rather than measurements. Remove the file and
+    load it again once the map has settled.</div>`}</div>`));
 }
 
 /* ================= READ THE PICTURE ITSELF =================
@@ -4235,17 +4234,29 @@ function instancesFromProb(prob, W, H, thr, minPx){
      snap      refine a hand placement against the imagery, by correlation
      measure   the full area report for the ground it covers
      export    mask, instances, GeoJSON, CSV, world files - on ITS grid
-     verify    score every published footprint against this image's own pixels
      segment   run a building model on the picture itself
      compare   its polygons against the published ones, per building
      height    per-building height from 3D points
-*/
+
+   ⚠️ EVERY ACTION LISTED HERE MUST BE A CONTROL THE USER CAN ACTUALLY REACH.
+   This table is shown to the user as "What can be done with it", so an entry
+   that no panel implements is a promise the app breaks the moment they look for
+   it. Two were doing exactly that:
+
+     verify  "Check the footprints - score published outlines against these
+             pixels" was offered for every raster and existed nowhere. Scoring
+             published outlines against the pixels is what `segment` does, via
+             the model, and the IoU it reports; there was never a separate
+             control. Removed rather than left as an advertisement.
+     export  was listed for GeoJSON, KML and CSV, and the vector workspace has
+             one button in it: Remove them. Removed from the vector kinds.
+
+   If a control is added later, the action goes back in the same commit. */
 const ACTIONS = {
   place:   {label:'Place on the map',        why:'position it from its own coordinates'},
   snap:    {label:'Snap to the imagery',     why:'refine the placement by correlation'},
   measure: {label:'Measure this ground',     why:'the full area report for its footprint'},
   export:  {label:'Export for this ground',  why:'mask and data on this file’s own pixel grid'},
-  verify:  {label:'Check the footprints',    why:'score published outlines against these pixels'},
   segment: {label:'Find buildings in it',    why:'run a building model on the picture'},
   compare: {label:'Compare with published',  why:'agree, missing, extra — per building'},
   height:  {label:'Read heights',            why:'per-building height from the points'},
@@ -4254,26 +4265,26 @@ const FILE_KINDS = [
   {ext:['tif','tiff'], kind:'raster-geo', label:'GeoTIFF',
    note:'Read with geotiff.js. If it carries georeferencing we place it exactly; if not it '
       + 'falls through to hand placement.',
-   actions:['place','measure','export','verify','segment'], ready:true},
+   actions:['place','measure','export','segment'], ready:true},
   {ext:['jpg','jpeg'], kind:'raster-exif', label:'JPEG',
    note:'No map coordinates in the pixels, but a drone usually writes GPS into EXIF. Where '
       + 'that exists we place it from there, then snap.',
-   actions:['place','snap','measure','export','verify','segment'], ready:true},
+   actions:['place','snap','measure','export','segment'], ready:true},
   {ext:['png','webp','bmp','gif'], kind:'raster-plain', label:'Plain image',
    note:'Carries no position at all. You place it, then snapping refines that against the '
       + 'imagery — measured to 0.1 m from 33 m out.',
-   actions:['snap','measure','export','verify','segment'], ready:true},
+   actions:['snap','measure','export','segment'], ready:true},
   {ext:['geojson','json'], kind:'vector', label:'GeoJSON',
    note:'Your own polygons. Drawn on the map and scored building by building against the '
       + 'published data — which agree, which are missing, which are extra.',
-   actions:['compare','export'], ready:true},
+   actions:['compare'], ready:true},
   {ext:['kml'], kind:'vector-kml', label:'KML',
    note:'Google Earth polygons. Converted to GeoJSON and treated the same.',
-   actions:['compare','export'], ready:true},
+   actions:['compare'], ready:true},
   {ext:['csv','txt'], kind:'vector-csv', label:'CSV',
    note:'Points or WKT polygons in columns. Latitude/longitude or a geometry column are '
       + 'both understood.',
-   actions:['compare','export'], ready:true},
+   actions:['compare'], ready:true},
   {ext:['kmz'], kind:'vector-kmz', label:'KMZ',
    note:'A zipped KML. Not yet unpacked in the browser — unzip it and upload the .kml.',
    actions:['compare'], ready:false},
@@ -4369,22 +4380,27 @@ function removeVectors(){
   userVectors = null;
   applyPanelMode();
 }
+/* "Measure this footprint" reports on the ground under the image, and it does
+   that by making the image's own extent the selection — which is right while the
+   image is there and wrong the moment it goes. MEASURED: open a GeoTIFF, measure
+   it, remove it, and the map still had the rectangle drawn on it and the status
+   line still read "296 buildings in the selected area" for a file that no longer
+   existed; clicking a building did nothing, because the selection owned the panel.
+
+   A selection the USER drew is theirs and must survive; one the image made for
+   them belongs to the image. Which of the two it is, is recorded when it is made
+   rather than guessed at afterwards by comparing coordinates. */
+let boxFromOverlay = false;
 function removeOverlay(){
   removeModelOverlay();          // the model belongs to the image it read
   restoreMapOutlines();          // and the map gets its own setting back
+  if(boxFromOverlay) clearSelection();
   if(map.getLayer('up-img')) map.removeLayer('up-img');
   if(map.getSource('upsrc')) map.removeSource('upsrc');
   overlay = null;
   const b = document.getElementById('upload');
   if(b){ b.classList.remove('on'); b.textContent = 'Open a file…'; }
   applyPanelMode();
-}
-/* Everything a file brought with it. */
-function removeAllFiles(){
-  removeOverlay();
-  removeVectors();
-  loadedChips();
-  emptyBody();
 }
 /* The canonical empty panel, written once so the three places that reset it
    cannot drift into saying three different things. */
@@ -4399,26 +4415,6 @@ function emptyBody(){
    An overlay you cannot see the state of is an overlay you cannot get rid of.
    Each loaded thing gets a chip with an ×; the row disappears when nothing is
    loaded, so it costs nothing when unused. */
-/* Replaced by applyPanelMode(): what is loaded now decides the whole column
-   rather than adding a row to it. Kept as a forwarder so no caller can be left
-   pointing at nothing. */
-function loadedChips(){ applyPanelMode(); }
-function _unusedLoadedChips(){
-  const host = document.getElementById('loaded');
-  if(!host) return;
-  const items = [];
-  if(overlay)     items.push({id:'lc-img', label:overlay.name, kind:'image'});
-  if(modelResult) items.push({id:'lc-mdl', label:`${modelResult.count} read from it`, kind:'model'});
-  if(userVectors) items.push({id:'lc-vec', label:`${userVectors.features.length} of your polygons`, kind:'vectors'});
-  host.hidden = !items.length;
-  if(!items.length){ host.innerHTML = ''; return; }
-  host.innerHTML = `<div class="hrow"><h2>Loaded</h2></div>` + items.map(i =>
-    `<div class="lc"><span class="lc-k">${i.kind}</span><span class="lc-n">${i.label}</span>
-       <button class="lc-x" id="${i.id}" aria-label="Remove ${i.kind}">×</button></div>`).join('');
-  on('lc-img','click', ()=>{ removeOverlay(); emptyBody(); });
-  on('lc-mdl','click', ()=>{ removeModelOverlay(); loadedChips(); });
-  on('lc-vec','click', ()=>{ removeVectors(); loadedChips(); emptyBody(); });
-}
 function placeOverlay(cv, bb, name, proj, geo){
   removeOverlay();
   map.addSource('upsrc', {type:'image', url: cv.toDataURL('image/png'),
@@ -4441,7 +4437,6 @@ function placeOverlay(cv, bb, name, proj, geo){
   applyPanelMode();
   const b = document.getElementById('upload');
   if(b){ b.classList.add('on'); b.textContent = 'Remove image'; }
-  loadedChips();
 }
 function moveOverlay(bb){
   if(!overlay) return;
@@ -4568,7 +4563,14 @@ async function basemapPatch(bb, W, H){
    guarantee, the palette, the world file and the ZIP writer all apply unchanged.
    Nothing here is special-cased. */
 let modelResult = null;      // {own, count, W, H, thr}
-function rasterFromOwn(own, W, H){
+/* `proj` IS THE UPLOAD'S, NOT A CONSTANT. This used to return 'deg' unconditionally,
+   and exportArea() reads exactly this field to choose the world-file arithmetic and
+   the .prj. So a model result read off a Web Mercator GeoTIFF was written with a
+   degree world file and EPSG:4326 — the plate carree drift this file spends forty
+   lines warning about at renderMasks(), reintroduced through the one raster that
+   did not come from renderMasks(). The comparison path beside it always passed
+   overlay.proj through; only the export did not. */
+function rasterFromOwn(own, W, H, proj){
   const pal = [];
   let k = 0;
   for(let i=0;i<W*H;i++) if(own[i] > k) k = own[i];
@@ -4601,7 +4603,8 @@ function rasterFromOwn(own, W, H){
     bp[q+3]=np_[q+3]=255;
   }
   b.putImageData(bd,0,0); n.putImageData(nd,0,0);
-  return {binC, instC, W, H, gsd:0, nInst:k, builtFraction:built/(W*H), seam, proj:'deg'};
+  return {binC, instC, W, H, gsd:0, nInst:k, builtFraction:built/(W*H), seam,
+          proj: proj || 'deg'};
 }
 async function runModelOnOverlay(){
   if(!overlay) return;
@@ -4618,7 +4621,7 @@ async function runModelOnOverlay(){
     const {own, count} = instancesFromProb(prob, W, H, 0.5, minPx);
     modelResult = {own, count, W, H, thr:0.5, ms:Math.round(performance.now()-t0), gsd, minPx};
     // draw it over the map so it can be seen against the imagery
-    const R = rasterFromOwn(own, W, H);
+    const R = rasterFromOwn(own, W, H, overlay.proj);
     if(map.getLayer('mdl-img')) map.removeLayer('mdl-img');
     if(map.getSource('mdlsrc')) map.removeSource('mdlsrc');
     map.addSource('mdlsrc', {type:'image', url:R.instC.toDataURL('image/png'),
@@ -4684,17 +4687,55 @@ async function runModelOnOverlay(){
     if(btn){ btn.disabled = false; btn.textContent = 'Find buildings in it'; }
   }
 }
+/* ⚠️ THE PIXELS ARE THE MODEL'S; EVERY OTHER FIGURE IS THE PUBLISHED DATA'S.
+   This used to write `st.cover = R.builtFraction` — the MODEL's built fraction —
+   into a statistics block whose every other row (count, median footprint, density,
+   compactness) is measured from the PUBLISHED footprints. One row of the CSV
+   described a different dataset from the rest of it, under a column that says
+   "measured", and nothing named the difference.
+
+   Coverage is now measured from the published footprints on the model's own grid,
+   so the whole block is about one thing; the model's reading is carried as its own
+   provenance row, and the archive says which of the two the mask holds. */
 async function exportModelResult(everything){
   if(!modelResult || !overlay) return;
-  const R = rasterFromOwn(modelResult.own, modelResult.W, modelResult.H);
+  const R = rasterFromOwn(modelResult.own, modelResult.W, modelResult.H, overlay.proj);
   R.gsd = modelResult.gsd;
   const bb = overlay.bb;
+  dedupe();
   const feats = buildingsIn(bb);
   const st = areaStats(bb, feats);
-  st.cover = R.builtFraction;
+  const pubR = renderMasks(bb, feats,
+                           {W:modelResult.W, H:modelResult.H, proj:overlay.proj});
+  st.cover = pubR.builtFraction;
   st.overlap = st.bcr > 0 ? Math.max(0, 1 - st.cover / st.bcr) : 0;
-  lastRaster = R; lastStats = st; lastFeats = feats; lastBox = bb;
-  await exportArea(bb, feats, st, everything, R);
+  st.modelCover = R.builtFraction;
+  st.modelCount = modelResult.count;
+  let bc = null;
+  try { bc = blockComplexity(bb, feats); } catch(e){ bc = null; }
+  await withExportState(bb, feats, st, R, bc,
+                        () => exportArea(bb, feats, st, everything, R));
+}
+/* ---- BORROWED, NOT TAKEN ----
+   exportForOverlay() and exportModelResult() both need lastRaster / lastStats /
+   lastBC set, because statsCSV() and manifest() read them as module state. They
+   used to assign lastBox as well and never put it back, so exporting for an
+   uploaded file left the app believing a rectangle was selected: the status line
+   went on quoting the file's building count as "the selected area" after the file
+   had been removed, clicking a building did nothing because "the selection owns
+   the panel", and Escape cleared a selection the user never drew.
+
+   The export needs that state for the length of one call, so it borrows it for
+   exactly that long. */
+async function withExportState(bb, feats, st, R, bc, run){
+  const keep = {box:lastBox, raster:lastRaster, stats:lastStats, feats:lastFeats, bc:lastBC};
+  lastBox = bb; lastRaster = R; lastStats = st; lastFeats = feats; lastBC = bc;
+  try { return await run(); }
+  finally {
+    lastBox = keep.box; lastRaster = keep.raster; lastStats = keep.stats;
+    lastFeats = keep.feats; lastBC = keep.bc;
+    refresh();
+  }
 }
 
 /* ---- everything the app knows about this ground, on the upload's own grid ---- */
@@ -4710,9 +4751,10 @@ async function exportForOverlay(everything){
   const R = renderMasks(bb, feats, {W:overlay.W, H:overlay.H, proj:overlay.proj});
   st.cover = R.builtFraction;
   st.overlap = st.bcr > 0 ? Math.max(0, 1 - st.cover / st.bcr) : 0;
-  lastRaster = R; lastStats = st; lastFeats = feats; lastBox = bb;
-  try { lastBC = blockComplexity(bb, feats); } catch(e){ lastBC = null; }
-  await exportArea(bb, feats, st, everything, R);
+  let bc = null;
+  try { bc = blockComplexity(bb, feats); } catch(e){ bc = null; }
+  await withExportState(bb, feats, st, R, bc,
+                        () => exportArea(bb, feats, st, everything, R));
 }
 
 on('im-remove','click', ()=>{ removeOverlay(); emptyBody(); });
@@ -4788,6 +4830,7 @@ function overlayPanel(extra){
   on('mdl-run','click', runModelOnOverlay);
   on('mdl-export','click', ()=>exportModelResult(true));
   on('up-report','click', ()=>{ if(!overlay) return;
+    boxFromOverlay = true;                 // the image made this box, not the user
     drawBox2(overlay.bb); areaReport(overlay.bb); });
   on('up-snap','click', ()=>snapOverlay());
   on('up-fit','click', ()=>{ if(!overlay) return;
@@ -4796,7 +4839,6 @@ function overlayPanel(extra){
     const el=document.getElementById('up-snapnote'); if(el) el.textContent='';
   });
 })();
-function wireOverlayPanel(){}   // nothing left in the body to wire
 
 on('tif','change', async (ev) => {
   const file = ev.target.files && ev.target.files[0];
@@ -4823,6 +4865,82 @@ on('tif','change', async (ev) => {
 });
 
 function k_ready(k){ return k && k.ready; }
+
+/* ================= WHAT PROJECTION IS THIS GeoTIFF IN =================
+   ⚠️ THIS WAS GUESSED FROM THE SIZE OF THE NUMBERS, AND IT WAS WRONG FOR THE
+   COMMONEST FILE IN THE WORLD.
+
+   The old rule was: if any coordinate exceeds 180, it must be Web Mercator
+   metres. UTM coordinates also exceed 180 — an easting is ~500,000 and a
+   northing runs to 10,000,000 — so every UTM file was run through the inverse
+   Mercator and placed wherever that landed. MEASURED on two real files
+   downloaded from public archives, both of which state their CRS in their own
+   header:
+
+     rasterio RGB.byte.tif   EPSG:32618  UTM 18N   -> placed in the Algerian Sahara
+     OpenAerialMap drone     EPSG:32750  UTM 50S   -> placed in the North Sea,
+       a survey of Desa Gumantar, Lombok, Indonesia, put 12,000 km away
+
+   And the panel said "Placed from its own georeferencing. Nothing was guessed."
+   The failure this file's own comment called "the hardest for a user to notice"
+   was being announced as a success. Aerial and drone surveys are delivered in
+   UTM as a matter of course, so this was not an edge case — it was the norm.
+
+   A GeoTIFF does not need to be guessed at. ProjectedCSTypeGeoKey carries the
+   EPSG code, and for UTM the code IS the zone: 326xx north, 327xx south. So the
+   file is asked what it is, and a zone we can name is reprojected properly
+   rather than refused; anything still unidentified is refused by NAME, which is
+   something a user can act on. */
+const MERC_EPSG = [3857, 900913, 102100, 3785, 102113];
+function describeGeoTIFFCRS(keys){
+  const pcs = keys.ProjectedCSTypeGeoKey, gcs = keys.GeographicTypeGeoKey;
+  const model = keys.GTModelTypeGeoKey;          // 1 projected, 2 geographic
+  const cite = keys.GTCitationGeoKey || keys.GeogCitationGeoKey || '';
+  if(pcs && MERC_EPSG.indexOf(pcs) >= 0) return {kind:'merc', epsg:pcs, cite};
+  if(pcs >= 32601 && pcs <= 32660) return {kind:'utm', zone:pcs-32600, south:false, epsg:pcs, cite};
+  if(pcs >= 32701 && pcs <= 32760) return {kind:'utm', zone:pcs-32700, south:true,  epsg:pcs, cite};
+  if(model === 2 || (!pcs && (!gcs || gcs === 4326))) return {kind:'deg', epsg:gcs || 4326, cite};
+  return {kind:'unknown', epsg:pcs || gcs || null, cite};
+}
+/* Inverse transverse Mercator on the WGS84 ellipsoid (Snyder / USGS 1395).
+   Closed form, sub-metre, and short enough to carry rather than pull in proj4. */
+function utmToLonLat(E, N, zone, south){
+  const a = 6378137, f = 1/298.257223563;
+  const e2 = 2*f - f*f, ep2 = e2/(1 - e2), k0 = 0.9996;
+  const x = E - 500000, y = south ? N - 10000000 : N;
+  const M = y/k0;
+  const mu = M/(a*(1 - e2/4 - 3*e2*e2/64 - 5*e2*e2*e2/256));
+  const e1 = (1 - Math.sqrt(1 - e2))/(1 + Math.sqrt(1 - e2));
+  const p1 = mu + (3*e1/2 - 27*e1**3/32)*Math.sin(2*mu)
+                + (21*e1*e1/16 - 55*e1**4/32)*Math.sin(4*mu)
+                + (151*e1**3/96)*Math.sin(6*mu)
+                + (1097*e1**4/512)*Math.sin(8*mu);
+  const sp = Math.sin(p1), cp = Math.cos(p1), tp = Math.tan(p1);
+  const C1 = ep2*cp*cp, T1 = tp*tp;
+  const N1 = a/Math.sqrt(1 - e2*sp*sp);
+  const R1 = a*(1 - e2)/Math.pow(1 - e2*sp*sp, 1.5);
+  const D = x/(N1*k0);
+  const lat = p1 - (N1*tp/R1)*(D*D/2
+      - (5 + 3*T1 + 10*C1 - 4*C1*C1 - 9*ep2)*D**4/24
+      + (61 + 90*T1 + 298*C1 + 45*T1*T1 - 252*ep2 - 3*C1*C1)*D**6/720);
+  const lon = ((zone - 1)*6 - 180 + 3)*Math.PI/180
+      + (D - (1 + 2*T1 + C1)*D**3/6
+      + (5 - 2*C1 + 28*T1 - 3*C1*C1 + 8*ep2 + 24*T1*T1)*D**5/120)/cp;
+  return [lon*180/Math.PI, lat*180/Math.PI];
+}
+/* An image is placed by its four corners and the renderer interpolates between
+   them, so reprojecting a curved grid onto a lon/lat box is an approximation
+   whose error grows with extent. It is centimetres over a drone survey and
+   metres over a whole UTM tile — so it is MEASURED against the true reprojected
+   centre and reported, rather than left for the user to discover. */
+function cornerFitResidual(bbox, zone, south, bb){
+  const [w0,s0,e0,n0] = bbox;
+  const [tlon, tlat] = utmToLonLat((w0+e0)/2, (s0+n0)/2, zone, south);
+  const clon = (bb.w+bb.e)/2, clat = (bb.s+bb.n)/2;
+  const kx = Math.cos(tlat*Math.PI/180)*111320;
+  return Math.hypot((clon-tlon)*kx, (clat-tlat)*110540);
+}
+
 async function loadGeoTiffFile(file, say, kind){
   const GT = await loadGeoTIFF();
   const buf = await file.arrayBuffer();
@@ -4834,28 +4952,57 @@ async function loadGeoTiffFile(file, say, kind){
   if(!bbox) throw new Error('this GeoTIFF carries no georeferencing — save it as a plain '
     + 'image instead and place it on the map by hand');
   let [w,s,e,n] = bbox;
-  /* A GeoTIFF can be in any projection. Web Mercator metres are detected and
-     converted, degrees pass through, anything else is refused rather than drawn
-     in the wrong place - the failure hardest for a user to notice. */
-  const looksMetres = Math.abs(w) > 180 || Math.abs(e) > 180 ||
-                      Math.abs(s) > 90  || Math.abs(n) > 90;
-  const proj = looksMetres ? 'merc' : 'deg';
-  if(looksMetres){
+  // the file states its own CRS; it is read, never inferred from the numbers
+  const keys = (img.getGeoKeys && img.getGeoKeys()) || img.geoKeys || {};
+  const crs = describeGeoTIFFCRS(keys);
+  let proj = 'deg', residual = null, how = '';
+  if(crs.kind === 'merc'){
     const R = 20037508.342789244;
     const toLng = x => x*180/R;
     const toLat = y => (2*Math.atan(Math.exp(y*Math.PI/R)) - Math.PI/2)*180/Math.PI;
     [w,e] = [toLng(w), toLng(e)]; [s,n] = [toLat(s), toLat(n)];
+    proj = 'merc';
+    how = 'Web Mercator, converted to degrees for the map.';
+  } else if(crs.kind === 'utm'){
+    const cs = [[bbox[0],bbox[1]], [bbox[2],bbox[1]], [bbox[2],bbox[3]], [bbox[0],bbox[3]]]
+      .map(([x,y]) => utmToLonLat(x, y, crs.zone, crs.south));
+    w = Math.min(...cs.map(c=>c[0])); e = Math.max(...cs.map(c=>c[0]));
+    s = Math.min(...cs.map(c=>c[1])); n = Math.max(...cs.map(c=>c[1]));
+    residual = cornerFitResidual(bbox, crs.zone, crs.south, {w,s,e,n});
+    /* The pixel rows of a UTM raster are uniform in UTM metres, not in degrees
+       and not in Mercator metres. Over a survey-sized extent the three agree to
+       well under a pixel, and the export grid has to name one — degrees, which
+       is how the overlay itself is placed, so the mask lands on the image. */
+    proj = 'deg';
+    how = `UTM zone ${crs.zone}${crs.south?'S':'N'} (EPSG:${crs.epsg}), reprojected to WGS84.`;
+  } else if(crs.kind === 'deg'){
+    how = 'WGS84 degrees.';
+  } else {
+    throw new Error(`this GeoTIFF is in ${crs.epsg ? 'EPSG:'+crs.epsg : 'an unidentified projection'}`
+      + `${crs.cite ? ` — “${crs.cite}”` : ''}, which this app cannot reproject. `
+      + `It reads WGS84 degrees, Web Mercator and any UTM zone. Reproject it to `
+      + `EPSG:4326 (gdalwarp -t_srs EPSG:4326) and open it again.`);
   }
   if(!(isFinite(w)&&isFinite(s)&&isFinite(e)&&isFinite(n)) ||
      Math.abs(w)>180 || Math.abs(e)>180 || Math.abs(s)>90 || Math.abs(n)>90)
-    throw new Error('the coordinates are not WGS84 or Web Mercator — reproject it first');
+    throw new Error('the coordinates do not resolve to a place on Earth — reproject it first');
   const cv = await decodeTiff(img, W, H);
   placeOverlay(cv, {w,s,e,n}, file.name, proj, true);
+  overlay.crs = {label: crs.kind === 'utm' ? `EPSG:${crs.epsg} · UTM ${crs.zone}${crs.south?'S':'N'}`
+                       : crs.kind === 'merc' ? 'EPSG:3857 · Web Mercator'
+                       : `EPSG:${crs.epsg || 4326} · degrees`,
+                 reprojected: crs.kind === 'utm', residual};
+  fillImagePanel();
   map.fitBounds([[w,s],[e,n]], {padding:40, duration:800});
   say(overlayPanel(`<div class="note note-info"><strong>Placed from its own
-    georeferencing.</strong> ${proj === 'merc' ? 'Web Mercator, converted to degrees for the map.'
-    : 'WGS84 degrees.'} Nothing was guessed.</div>`));
-  wireOverlayPanel();
+    georeferencing.</strong> ${how} Nothing was guessed — the projection was read from
+    the file's own header, not inferred from the size of its coordinates.</div>`
+    + (residual != null && residual > 1
+      ? `<div class="note note-warn"><strong>This is a large extent for a corner fit.</strong>
+         An image is placed by its four corners and the map interpolates between them, so a
+         curved UTM grid is approximated. Measured against the true reprojected centre, the
+         middle of this image is about <b>${residual.toFixed(1)} m</b> out. Reproject it to
+         EPSG:4326 if that matters for what you are measuring.</div>` : '')));
 }
 
 async function decodeTiff(img, W, H){
@@ -4923,7 +5070,16 @@ async function loadPlainImage(file, say, kind){
   }
   placeOverlay(cv, {w:cx-cw/2, e:cx+cw/2, s:cy-ch/2, n:cy+ch/2},
                file.name, 'deg', !!exif);
+  /* SET BEFORE THE PANEL IS REDRAWN, NOT AFTER. placeOverlay() fills the panel,
+     and the Position row reads overlay.exif to choose between "from its EXIF GPS"
+     and "from its own georeferencing". Assigning it afterwards meant the row was
+     rendered while exif was still undefined, so a photograph placed from its EXIF
+     was labelled "from its own georeferencing" in the panel while the note in the
+     body directly below said "Placed from the GPS in its EXIF" — the same two
+     lines disagreeing about the same file that this panel has been fixed for
+     before. */
   overlay.exif = exif;
+  fillImagePanel();
   /* ACTIONS ARE BUTTONS, NOT WORDS IN A SENTENCE. These three were links inside
      prose and measured 12, 31 and 14 px tall - unusable on a phone, and reading
      as references rather than as the things you are meant to press. */
@@ -4938,7 +5094,6 @@ async function loadPlainImage(file, say, kind){
        something a browser can do, and guessing would be worse than asking. Pan the map to
        the right place, then fit and snap: that part <em>is</em> measurable, and it is the
        same correlation that put this project's alignment at 0.52 m.</div>`));
-  wireOverlayPanel();
 }
 
 /* ---- THE SEAM FOR A MODEL ----
@@ -4959,8 +5114,7 @@ map.on('load', refresh);
 // applyTheme runs once before the style exists, so on a light-mode machine the label
 // colours were never re-applied. Run it again once there are layers to colour.
 map.on('load', applyTheme);
-map.on('load', ()=>{ buildLayerUI(); for(const c of LAYERS) setLayer(c, c.on);
-  applySrcMode(); applyDrawScope(); });
+map.on('load', ()=>{ applySrcMode(); applyDrawScope(); });
 </script>
 </body>
 </html>

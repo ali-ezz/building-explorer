@@ -1,7 +1,7 @@
 # Global Building Explorer
 
 **Every building on Earth, on one map — with its measurements, its height, and its
-neighbours. One HTML file, 69 KB. No server, no database, no build step.**
+neighbours. One HTML file, 268 KB. No server, no database, no build step.**
 
 ### ▶ [Open the explorer](https://ali-ezz.github.io/building-explorer/)
 
@@ -16,7 +16,7 @@ and Overture contributors.</sub>
 
 **Click any building** and read its record: footprint area, perimeter, compactness,
 the **exact number of buildings physically touching it**, height in 2023 and 2020, an
-estimate of storeys, and its share of a population total you supply.
+estimate of storeys, and its share of the built volume around it.
 
 **Travel in time.** The imagery slider moves through Esri's archive from 2014 to 2026.
 Where two years turn out to be the same photograph, the app says so rather than
@@ -32,6 +32,34 @@ opens it lands in exactly the same place, at the same zoom.
 one, and are romanised character by character where it does not, so Greek, Cyrillic,
 Arabic, Persian, Hebrew, Thai and Devanagari all render in Latin script.
 
+**Measure a neighbourhood.** Drag a rectangle and get its count, density, footprint
+distribution, how much ground is actually under a building, and **block complexity** —
+the published metric for how many parcels you must cross to reach a street, from
+*Infrastructure deficits and informal settlements in sub-Saharan Africa* (Nature, 2025).
+k = 1 is a planned block; k = 5+ is a severe access deficit.
+
+**Take it away as a deliverable.** One ZIP: a two-colour mask with touching buildings
+separated by a one-pixel seam, a colour instance mask on the same grid, the footprints
+as GeoJSON, every figure as CSV, and world files plus `.prj` so it lands correctly in
+QGIS. Rendered in EPSG:3857, to match the imagery it was traced from.
+
+**Find the best picture, not the newest one.** The archive holds 196 releases and the
+newest is a publication order, not a quality order. "Sharpest here" searches it for
+*this* ground — over Kibera it finds imagery 1.6× sharper and twice as well placed as
+the one on screen.
+
+**Bring your own data.** A GeoTIFF lands at its own coordinates — WGS84, Web Mercator or
+any UTM zone, read from the file's own header and reprojected; a drone JPEG is placed
+from its EXIF GPS; a plain photograph you place and then snap to the imagery by
+correlation. GeoJSON, KML and CSV are scored building by building against the published
+data — which agree, which you have and they do not, which they have and you do not.
+Everything is read in your browser; there is no server here to upload a file to.
+
+**Read the picture itself.** A public 15 MB segmentation model, run in the browser on
+your own image — the one place this app looks at pixels rather than re-serving what
+someone else traced. Its result is always scored against the published footprints and
+never shown alone, because its quality on dense informal fabric is unmeasured.
+
 Works on a phone, a tablet and a desktop, in a light or a dark theme.
 
 ---
@@ -41,7 +69,7 @@ Works on a phone, a tablet and a desktop, in a light or a dark theme.
 | | |
 |---|---|
 | **Measured** | footprint geometry, area, perimeter, compactness, touching neighbours, the source's own confidence |
-| **Estimated** | **height** — from a ~76 m grid, so it describes the block rather than the individual roof, and reads about 2 m low against finer data; **floors** — height ÷ 3.0 m, an estimate built on an estimate; **population share** — allocated by building volume from a total you enter, and **never a headcount** |
+| **Estimated** | **height** — from a ~76 m grid, so it describes the block rather than the individual roof, and reads about 2 m low against finer data; **floors** — height ÷ 3.0 m, an estimate built on an estimate; **population share** — each building's share of the local built volume, to multiply by a total you trust, and **never a headcount** |
 
 Every estimated figure carries that caveat in the panel itself, next to the number.
 
@@ -85,8 +113,12 @@ Keep both in any copy you publish or redistribute. Full detail, with links and t
 software licences, is in **[ATTRIBUTION.md](ATTRIBUTION.md)**.
 
 **Requires an internet connection.** Nothing is bundled — every layer streams from its
-publisher at the moment you look at it. That is what keeps the file at 69 KB while
-covering the whole planet, and it also means the app cannot work offline.
+publisher at the moment you look at it. That is what keeps one file covering the whole
+planet, and it also means the app cannot work offline.
+
+Two libraries are fetched only when they are needed rather than on every page load:
+**geotiff.js** when you click a building or open a GeoTIFF, and **ONNX Runtime Web**
+plus the 15 MB model only if you ask it to read your own picture.
 
 ---
 
@@ -120,15 +152,25 @@ validation — is maintained separately and is not public.
 
 ## Deploying an update
 
-This repository holds only what is published. It is a subtree of the private project
-repository and is not edited here.
+This repository holds only what is published: `index.html` and its licences.
+
+`index.html` was originally generated from the private project repository and pushed
+here as a subtree. **It is now also edited directly in this repository** — the recent
+history is commits against this file. That means the two copies can diverge, and a
+`git subtree push` from the private side would silently overwrite work done here.
+
+So, whichever way you are working, make it the one way:
 
 ```bash
+# editing here (what the recent history does)
+git add index.html && git commit -m "..." && git push origin main
+
+# regenerating from the private repository — pull this file back FIRST,
+# or the edits made here are lost
 python3 scripts/build_global_app.py data/deliverable/global_app.html
 cp data/deliverable/global_app.html site/index.html
 git add site && git commit -m "site: update"
-git push origin main
-git subtree push --prefix site explorer main
+git push origin main && git subtree push --prefix site explorer main
 ```
 
 GitHub Pages rebuilds within a minute or two.
