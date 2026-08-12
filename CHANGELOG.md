@@ -7,6 +7,34 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.1.1] — 2026-08-12
+
+### Fixed
+
+- **A blank white page on first open, with no explanation.** Three render-blocking
+  scripts came from one host, `unpkg.com`, with no fallback and nothing on screen while
+  they loaded. Where unpkg is slow, throttled or blocked, the whole application was a
+  white page — and the only sane response to a white page is to reload it, repeatedly,
+  until it works. There is now a second host (jsdelivr, already trusted here for
+  geotiff.js and the ONNX runtime) via a synchronous `document.write` fallback, and a
+  boot screen that says what is happening from the first paint. If both hosts fail it
+  says *that*, with one deliberate "Try again", instead of leaving a blank page to be
+  interpreted.
+- **The status line described the map while you were looking at a picture.** It is
+  pinned outside the scroll region, so it survived the mode switch that hides every
+  other map control, and went on reporting "3,501 buildings in the selected area ·
+  imagery 4/30/2025" under a panel describing a file. It now describes whatever the
+  panel describes — the file's name, extent and ground resolution.
+
+### Changed
+
+- **The map's outlines are off while a picture is open**, and the map's own setting is
+  handed back untouched when the picture is removed. Drawing published footprints over
+  an image the moment it opens buries the thing you came to look at under somebody
+  else's tracing of the same ground. They remain one press away.
+
+---
+
 ## [1.1.0] — 2026-08-12
 
 The theme of this release is that several things the app said about itself were not
@@ -91,5 +119,6 @@ First public release.
 - English and romanised labels for Greek, Cyrillic, Arabic, Persian, Hebrew, Thai and
   Devanagari.
 
+[1.1.1]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.1.1
 [1.1.0]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.1.0
 [1.0.0]: https://github.com/ali-ezz/building-explorer/releases/tag/v1.0.0

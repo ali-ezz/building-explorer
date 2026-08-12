@@ -5,9 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Global Earth Explorer</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0e13'/%3E%3Cg fill='none' stroke='%235aa9e6' stroke-width='2'%3E%3Crect x='6' y='13' width='9' height='13'/%3E%3Crect x='17' y='7' width='9' height='19'/%3E%3C/g%3E%3C/svg%3E">
+<!-- ================= THE PAGE MUST NOT BE A BLANK WHITE SCREEN =================
+     Three render-blocking scripts came from ONE host, unpkg.com, with no fallback
+     and nothing on screen while they loaded. If unpkg is slow, throttled or blocked
+     — which it is, intermittently, in a good part of the world — the whole
+     application is a white page. Not a broken map, not an error: white. The only
+     sane response to a white page is to reload it, and to keep reloading until it
+     works, which is exactly what was reported.
+
+     Two changes. First, a SECOND HOST: the classic document.write fallback, which
+     runs synchronously during parsing, so the inline application script below still
+     finds maplibregl and pmtiles defined and needs no restructuring. jsdelivr is
+     already trusted here — geotiff.js and the ONNX runtime both come from it.
+     Second, #boot below says what is happening and, if both hosts fail, says THAT
+     instead of leaving a blank page to be interpreted. -->
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script>window.maplibregl || document.write('<scr'+'ipt src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"><\/scr'+'ipt>');</script>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"
+      onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css';">
 <script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+<script>window.pmtiles || document.write('<scr'+'ipt src="https://cdn.jsdelivr.net/npm/pmtiles@3.2.0/dist/pmtiles.js"><\/scr'+'ipt>');</script>
 <style>
 /* Design: a technical instrument, not a brochure. Neutrals carry a slight blue bias
    to sit with satellite imagery; one accent for interaction; data QUALITY is encoded
@@ -30,6 +47,29 @@
   --line-soft:#e6ecf2; --ink:#16202b; --dim:#5a6b7d; --faint:#8797a8; --accent:#1f6fb2; }
 :root[data-theme="dark"]{ --bg:#0a0e13; --panel:#111820; --raise:#18212b; --line:#222d3a;
   --line-soft:#1a232d; --ink:#e7eef7; --dim:#8593a6; --faint:#5a6778; --accent:#4d9fe8; }
+/* ---- first paint, before anything has loaded ---- */
+#boot{position:fixed;inset:0;z-index:9999;background:var(--bg);color:var(--ink);
+  display:flex;align-items:center;justify-content:center;text-align:center;
+  font:13.5px/1.55 ui-sans-serif,system-ui,-apple-system,sans-serif}
+#boot.gone{display:none}
+.boot-in{max-width:340px;padding:24px}
+.boot-mark{width:34px;height:34px;margin:0 auto 14px;border-radius:7px;
+  border:2px solid var(--accent);border-right-color:transparent;animation:bspin 1s linear infinite}
+@keyframes bspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.boot-mark{animation:none}}
+.boot-t{margin:0;font-size:14.5px;font-weight:600;letter-spacing:-.01em}
+.boot-s{margin:5px 0 0;font-size:12px;color:var(--dim)}
+.boot-h{margin:14px 0 0;font-size:11.5px;line-height:1.6;color:var(--faint)}
+.boot-h b{color:var(--dim);font-weight:600}
+#boot-retry{display:block;margin:12px auto 0;padding:9px 16px;min-height:40px;
+  background:var(--raise);color:var(--ink);border:1px solid var(--line);
+  border-radius:var(--radius);font:500 12px/1.2 inherit;cursor:pointer}
+#boot-retry:hover{border-color:var(--accent)}
+/* A SPINNER UNDER AN ERROR MESSAGE STILL SAYS "WORKING". When the libraries are
+   not coming, the mark stops turning and goes amber — the same colour this app
+   uses everywhere for "this is not a measurement you can rely on". */
+#boot.failed .boot-mark{animation:none;border-color:var(--estimated);
+  border-right-color:var(--estimated);transform:rotate(45deg)}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
   font:13.5px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -318,6 +358,21 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
 </style>
 </head>
 <body>
+<!-- Shown from the first paint, removed once the map's style is up. If the
+     libraries never arrive it becomes the explanation instead of a white page. -->
+<div id="boot">
+  <div class="boot-in">
+    <div class="boot-mark"></div>
+    <p class="boot-t">Building Explorer</p>
+    <p class="boot-s" id="boot-s">Loading the map library…</p>
+    <p class="boot-h" id="boot-h" hidden>
+      Nothing is bundled in this file — the map library and every layer stream from
+      their publishers, so the first open needs a working connection to
+      <b>unpkg.com</b> or <b>jsdelivr.net</b>.
+      <button id="boot-retry">Try again</button>
+    </p>
+  </div>
+</div>
 <div id="app">
   <div id="map"></div>
   <div id="provkey" style="display:none">
@@ -392,9 +447,14 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
           your image's own pixel grid and projection — so the mask drops onto your file one
           pixel to one pixel. Two-colour mask with touching buildings separated, colour instance
           mask, GeoJSON, statistics CSV and world files.</p>
+        <!-- OFF BY DEFAULT. The map's outlines are the map's, and drawing them over
+             a picture the moment it opens buries the thing you came to look at under
+             somebody else's tracing of the same ground. They are one press away, and
+             the map's own setting is remembered and handed back untouched when the
+             image is removed. -->
         <div class="seg" id="im-outlines" role="radiogroup" aria-label="Show published outlines over your image">
-          <button role="radio" aria-checked="true"  data-scope="all">Show outlines</button>
-          <button role="radio" aria-checked="false" data-scope="off">Hide</button>
+          <button role="radio" aria-checked="false" data-scope="all">Show outlines</button>
+          <button role="radio" aria-checked="true"  data-scope="off">Hide</button>
         </div>
         <div class="row" style="margin-top:8px"><button id="up-report">Measure this footprint</button></div>
         <div class="row" style="margin-top:8px"><button id="up-all">Download all</button>
@@ -538,6 +598,33 @@ td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
   </aside>
 </div>
 <script>
+/* ================= BOOT =================
+   Everything below assumes maplibregl and pmtiles exist. If they do not, the
+   first statement that touches them throws, the inline script dies, and the user
+   is left looking at a white page with no idea why — which is what produced
+   "it keeps reloading until it works". The check happens here, before anything
+   else, so a missing library is a SENTENCE rather than a blank screen. */
+const bootEl = document.getElementById('boot');
+const bootSay = t => { const e = document.getElementById('boot-s'); if(e) e.textContent = t; };
+const bootHint = (failed) => {
+  const h = document.getElementById('boot-h'); if(h) h.hidden = false;
+  if(failed && bootEl) bootEl.classList.add('failed');
+};
+function bootDone(){ if(bootEl) bootEl.classList.add('gone'); }
+{ const r = document.getElementById('boot-retry');
+  // the only reload in this application, and it is one the user asked for
+  if(r) r.addEventListener('click', () => location.reload()); }
+if(!window.maplibregl || !window.pmtiles){
+  bootSay('The map library could not be loaded.');
+  bootHint(true);
+  throw new Error('maplibre-gl / pmtiles unavailable from unpkg and jsdelivr');
+}
+bootSay('Starting the map…');
+/* Not a failure — the libraries are here and tiles are streaming. But if the
+   first view has not painted by now the connection is slow enough that the user
+   deserves to know it is the network and not a hung page. */
+setTimeout(() => { if(bootEl && !bootEl.classList.contains('gone')) bootHint(); }, 12000);
+
 const BASEMAPS = {"2014": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/5844/{level}/{row}/{col}", "2015": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/28163/{level}/{row}/{col}", "2016": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/18966/{level}/{row}/{col}", "2017": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/25521/{level}/{row}/{col}", "2018": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/23448/{level}/{row}/{col}", "2019": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/4756/{level}/{row}/{col}", "2020": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/29260/{level}/{row}/{col}", "2021": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/26120/{level}/{row}/{col}", "2022": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/45134/{level}/{row}/{col}", "2023": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/56102/{level}/{row}/{col}", "2024": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/16453/{level}/{row}/{col}", "2025": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/13192/{level}/{row}/{col}", "2026": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/32246/{level}/{row}/{col}"};
 /* year -> Esri's metadata service for that release; see imagery_metadata_urls() */
 const IMETA = {"2014": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2014_r21/MapServer", "2015": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2015_r23/MapServer", "2016": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2016_r22/MapServer", "2017": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2017_r19/MapServer", "2018": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2018_r17/MapServer", "2019": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2019_r16/MapServer", "2020": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2020_r16/MapServer", "2021": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2021_r17/MapServer", "2022": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2022_r15/MapServer", "2023": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2023_r11/MapServer", "2024": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2024_r13/MapServer", "2025": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2025_r12/MapServer", "2026": "https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata_2026_r06/MapServer"};
@@ -1863,6 +1950,23 @@ function centroid(f){
    panel and the export README both state. It moved there. */
 function refresh(){
   const el=document.getElementById('status');
+  /* ⚠️ THE STATUS LINE IS PINNED OUTSIDE #scroll, SO IT SURVIVES THE MODE SWITCH
+     THAT HIDES EVERY OTHER MAP CONTROL. With a picture open it went on reporting
+     "3,501 buildings in the selected area · imagery 4/30/2025" — a count of the
+     MAP's buildings and the date of the MAP's photograph, sitting directly under
+     the title while the panel beneath it described a file. The one line that
+     answers "what am I looking at" was answering about something else.
+
+     It describes whatever the panel describes. */
+  if(overlay){
+    const bb = overlay.bb, km2 = areaKm2(bb);
+    const gsd = (bb.e-bb.w)*Math.cos((bb.n+bb.s)/2*Math.PI/180)*111320/overlay.W;
+    const nm = overlay.name.length > 34 ? overlay.name.slice(0,32)+'…' : overlay.name;
+    el.innerHTML = `<b>${nm}</b> · ${km2 < 1 ? (km2*100).toFixed(1)+' ha' : km2.toFixed(2)+' km²'}`
+      + ` · <b>${gsd.toFixed(2)}</b> m/px`
+      + (overlay.geo ? '' : ' <span style="color:var(--faint)">· placed by hand</span>');
+    return;
+  }
   if(map.getZoom()<12){
     el.innerHTML='Zoomed out too far for buildings — '
       + '<a href="#" id="zin" style="color:var(--accent)">zoom in</a>'
@@ -4419,6 +4523,8 @@ function removeOverlay(){
   const b = document.getElementById('upload');
   if(b){ b.classList.remove('on'); b.textContent = 'Open a file…'; }
   applyPanelMode();
+  // the status line was describing the file; it goes back to describing the map
+  refresh();
 }
 /* The canonical empty panel, written once so the three places that reset it
    cannot drift into saying three different things. */
@@ -4447,6 +4553,13 @@ function placeOverlay(cv, bb, name, proj, geo){
   map.addLayer({id:'up-img', type:'raster', source:'upsrc',
     paint:{'raster-opacity':imgOpacity}});
   overlay = {name, bb, W:cv.width, H:cv.height, proj, canvas:cv, geo};
+  /* THE MAP'S SETTINGS GO OFF WHILE A PICTURE IS OPEN, AND COME BACK WHEN IT
+     CLOSES. Opening a file used to leave the map drawing its outlines straight
+     over it — the map's job continuing on top of the image's. setImageOutlines()
+     records what the map was set to before borrowing it, and removeOverlay()
+     calls restoreMapOutlines() to give it back, so the Buildings control you
+     return to is the one you left. */
+  setImageOutlines('off');
   // a new picture always arrives fully visible, whatever the last one was left at
   imgOpacity = 1;
   const opEl = document.getElementById('imgop'), opOut = document.getElementById('imgopv');
@@ -5128,6 +5241,9 @@ async function loadPlainImage(file, say, kind){
    they already work on exactly that: one integer per pixel. Verified available
    in this browser: WebGPU with a working adapter. */
 
+// the style is up and the first frame is painted — the boot screen has done its job
+map.on('load', bootDone);
+map.on('error', e => { if(e && e.error && !map.loaded()) bootHint(); });
 map.on('load', refresh);
 // applyTheme runs once before the style exists, so on a light-mode machine the label
 // colours were never re-applied. Run it again once there are layers to colour.

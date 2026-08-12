@@ -10,8 +10,8 @@ One HTML file. No server, no database, no build step.
 [![Open the explorer](https://img.shields.io/badge/▶_Open_the_explorer-1f6fb2?style=for-the-badge)](https://ali-ezz.github.io/building-explorer/)
 
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-6fcf97)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.0-4d9fe8)](CHANGELOG.md)
-[![Single file](https://img.shields.io/badge/single_file-269_KB-8593a6)](index.html)
+[![Version](https://img.shields.io/badge/version-1.1.1-4d9fe8)](CHANGELOG.md)
+[![Single file](https://img.shields.io/badge/single_file-276_KB-8593a6)](index.html)
 [![No build step](https://img.shields.io/badge/build_step-none-8593a6)](#hosting-it-yourself)
 [![Built at NARSS](https://img.shields.io/badge/built_at-NARSS-e0a34a)](#where-this-came-from)
 
